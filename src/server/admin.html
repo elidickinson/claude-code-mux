@@ -2513,8 +2513,6 @@
                     config.router.background || "";
                 document.querySelector('[name="websearch_model"]').value =
                     config.router.websearch || "";
-                document.querySelector('[name="auto_map_regex"]').value =
-                    config.router.auto_map_regex || "";
 
                 // Update Test tab models list
                 loadTestModels();
@@ -2567,18 +2565,27 @@
 
             // Router form auto-save
             function setupRouterAutoSave() {
+                console.log("=== setupRouterAutoSave called ===");
                 const routerForm = document.getElementById("router-form");
-                if (!routerForm) return;
+                console.log("Router form:", routerForm);
+                if (!routerForm) {
+                    console.warn("Router form not found!");
+                    return;
+                }
 
                 const inputs = routerForm.querySelectorAll(
                     "input, select, textarea",
                 );
-                inputs.forEach((input) => {
-                    input.addEventListener("change", () => {
+                console.log(`Found ${inputs.length} inputs in router form`);
+
+                inputs.forEach((input, index) => {
+                    console.log(`Setting up listener for input ${index}:`, input.name, input.tagName);
+                    input.addEventListener("change", (e) => {
+                        console.log("=== Change event fired ===", e.target.name, "=", e.target.value);
                         debounce(
                             "router",
                             () => {
-                                console.log("=== Router form change detected ===");
+                                console.log("=== Router form change detected (after debounce) ===");
                                 const formData = new FormData(routerForm);
                                 const defaultModel =
                                     formData.get("default_model");
