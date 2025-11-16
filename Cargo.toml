@@ -1,0 +1,87 @@
+[package]
+name = "claude-code-mux"
+version = "0.1.0"
+edition = "2021"
+authors = ["Claude Code Mux Contributors"]
+license = "MIT"
+description = "High-performance, intelligent Claude Code router built in Rust"
+repository = "https://github.com/yourusername/claude-code-mux"
+keywords = ["claude", "code", "router", "llm", "ai"]
+categories = ["command-line-utilities", "web-programming"]
+
+[[bin]]
+name = "ccm"
+path = "src/main.rs"
+
+[dependencies]
+# Web Framework
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
+
+# Async Runtime
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["io-util"] }
+futures = "0.3"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP Client
+reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1"
+pin-project = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Configuration
+config = "0.14"
+toml = "0.8"
+
+# Token Counting
+tiktoken-rs = "0.5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error Handling
+anyhow = "1"
+thiserror = "1"
+
+# Utilities
+dashmap = "5"              # Concurrent HashMap
+once_cell = "1"            # Lazy statics
+async-trait = "0.1"        # Async trait support
+dirs = "5"                 # User directories
+regex = "1"                # Regular expressions
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29", features = ["signal"] }  # Unix signals
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+mockito = "1"
+criterion = "0.5"          # Benchmarking
+
+# Property Testing
+proptest = "1"
+
+[[bench]]
+name = "routing"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.test]
+opt-level = 0

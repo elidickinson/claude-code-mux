@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "sub-agents": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "sub-agents-mcp"
+      ],
+      "env": {
+        "AGENTS_DIR": "/Users/bahkchanhee/DEV/claude-code-mux/.claude/agents",
+        "AGENT_TYPE": "cursor"
+      }
+    }
+  }
+}

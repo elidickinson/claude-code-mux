@@ -1,0 +1,799 @@
+# Claude Code Mux
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![GitHub Stars](https://img.shields.io/github/stars/9j/claude-code-mux?style=social)](https://github.com/9j/claude-code-mux)
+[![GitHub Forks](https://img.shields.io/github/forks/9j/claude-code-mux?style=social)](https://github.com/9j/claude-code-mux/fork)
+
+**Performance**: ~5MB RAM · <1ms routing · 1000+ req/s · Zero config overhead
+
+⚡️ **Multi-model intelligence with provider resilience**
+
+Use Minimax M2 for speed, GLM 4.6 for cost optimization, Kimi K2 Thinking for reasoning—all in the same session. When your primary provider goes down, it automatically falls back to your backup.
+
+A lightweight, Rust-powered proxy that provides intelligent model routing, provider failover, streaming support, and full Anthropic API compatibility for Claude Code.
+
+```
+Claude Code → Claude Code Mux → Multiple AI Providers
+              (Anthropic API)    (OpenAI/Anthropic APIs + Streaming)
+```
+
+## Table of Contents
+
+- [Why Choose Claude Code Mux?](#why-choose-claude-code-mux)
+- [Key Features](#key-features)
+- [Screenshots](#screenshots)
+- [Supported Providers](#supported-providers)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage Guide](#usage-guide)
+- [Routing Logic](#routing-logic)
+- [Configuration Examples](#configuration-examples)
+- [Advanced Features](#advanced-features)
+- [CLI Usage](#cli-usage)
+- [Documentation](#documentation)
+- [Performance](#performance)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Why Choose Claude Code Mux?
+
+### 🎯 Two Core Advantages
+
+#### 1. **Automatic Failover**
+Priority-based provider fallback - if your primary provider fails, automatically route to backup:
+
+```toml
+[[models]]
+name = "glm-4.6"
+
+[[models.mappings]]
+actual_model = "glm-4.6"
+priority = 1
+provider = "zai"
+
+[[models.mappings]]
+actual_model = "z-ai/glm-4.6"
+priority = 2
+provider = "openrouter"
+```
+
+If `zai` fails → automatically falls back to `openrouter`. No code changes needed.
+
+#### 2. **Easy Configuration**
+Web UI with auto-save - no JSON editing, no CLI commands, no restarts:
+
+| Task | Claude Code Router | Claude Code Mux |
+|------|-------------------|----------------|
+| **Add Provider** | Edit JSON + restart | Click "Add Provider" in Web UI |
+| **Add Model** | Edit JSON + restart | Click "Add Model" in Web UI |
+| **Change Routing** | Edit JSON + `ccr restart` | Select in dropdown (auto-saves) |
+| **View Config** | `cat ~/.claude-code-router/config.json` | Open Web UI |
+| **Share Config** | Copy JSON file | Share URL (`?tab=router`) |
+
+### 💡 What This Means
+
+**Reliability**: Your AI coding workflow doesn't break when one provider has downtime.
+
+**Speed**: Configure providers and models in 5 minutes via Web UI instead of editing JSON files.
+
+**Simplicity**: One Web UI to manage everything - no CLI commands to remember.
+
+## Key Features
+
+### 🎯 Core Features
+- ✨ **Modern Admin UI** - Beautiful web interface with auto-save and URL-based navigation
+- 🧠 **Intelligent Routing** - Auto-route by task type (websearch, reasoning, background, default)
+- 🔄 **Provider Failover** - Automatic fallback to backup providers with priority-based routing
+- 🌊 **Streaming Support** - Full Server-Sent Events (SSE) streaming for real-time responses
+- 🌐 **Multi-Provider Support** - 16+ providers including OpenAI, Anthropic, Groq, ZenMux, etc.
+- ⚡️ **High Performance** - ~5MB RAM, <1ms routing overhead (Rust powered)
+- 🎯 **Unified API** - Full Anthropic Messages API compatibility
+
+### 🚀 Advanced Features
+- 🔀 **Auto-mapping** - Regex-based model name transformation before routing (e.g., transform all `claude-*` to default model)
+- 🎯 **Background Detection** - Configurable regex patterns for background task detection
+- 🤖 **Multi-Agent Support** - Dynamic model switching via `CCM-SUBAGENT-MODEL` tags
+- 📊 **Live Testing** - Built-in test interface to verify routing and responses
+- ⚙️ **Centralized Settings** - Dedicated Settings tab for regex pattern management
+
+## Screenshots
+
+### Overview Dashboard
+Main dashboard showing router configuration, providers, and models summary.
+
+![Dashboard](docs/images/dashboard.png)
+
+### Provider Management
+Add and manage multiple AI providers with automatic format translation.
+
+![Providers](docs/images/providers.png)
+
+### Model Mappings with Fallback
+Configure models with priority-based fallback routing.
+
+![Models](docs/images/models.png)
+
+### Router Configuration
+Set up intelligent routing rules with auto-save functionality.
+
+![Routing](docs/images/routing.png)
+
+### Live Testing Interface
+Test your configuration with real API calls.
+
+![Testing](docs/images/testing.png)
+
+## Supported Providers
+
+### Anthropic-Compatible (Native Format)
+- **Anthropic** - Official Claude API provider
+- **ZenMux** - Unified API gateway (Sunnyvale, CA)
+- **z.ai** - China-based, GLM models
+- **Minimax** - China-based, MiniMax-M2 model
+- **Kimi For Coding** - Premium membership for Kimi
+
+### OpenAI-Compatible
+- **OpenAI** - Official OpenAI API
+- **OpenRouter** - Unified API gateway (500+ models)
+- **Groq** - LPU inference (ultra-fast)
+- **Together AI** - Open source model inference
+- **Fireworks AI** - Fast inference platform
+- **Deepinfra** - GPU inference
+- **Cerebras** - Wafer-Scale Engine inference
+- **Moonshot AI** - China-based, Kimi models (OpenAI-compatible)
+- **Nebius** - AI inference platform
+- **NovitaAI** - GPU cloud platform
+- **Baseten** - ML deployment platform
+
+All providers support **automatic format translation**, **streaming**, and **failover**!
+
+## Installation
+
+### Prerequisites
+- Rust 1.70+ (install from [rustup.rs](https://rustup.rs/))
+
+### Build from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/9j/claude-code-mux
+cd claude-code-mux
+
+# Build the release binary
+cargo build --release
+
+# The binary will be available at target/release/ccm
+```
+
+### Optional: Install to PATH
+
+```bash
+# Copy to /usr/local/bin for global access
+sudo cp target/release/ccm /usr/local/bin/
+
+# Or add to your shell profile (e.g., ~/.zshrc or ~/.bashrc)
+export PATH="$PATH:/path/to/claude-code-mux/target/release"
+```
+
+### Run Directly (Without Installing)
+
+```bash
+# From the project directory
+cargo run --release -- start
+```
+
+## Quick Start
+
+### 1. Start Claude Code Mux
+
+```bash
+ccm start
+```
+
+The server will start on `http://127.0.0.1:13456` with a web-based admin UI.
+
+### 2. Open Admin UI
+
+Navigate to:
+```
+http://127.0.0.1:13456
+```
+
+You'll see a modern admin interface with these tabs:
+- **Overview** - System status and configuration summary
+- **Providers** - Manage API providers
+- **Models** - Configure model mappings and fallbacks
+- **Router** - Set up routing rules (auto-saves on change!)
+- **Test** - Test your configuration with live requests
+
+### 3. Configure Claude Code
+
+Set Claude Code to use the proxy:
+
+```bash
+export ANTHROPIC_BASE_URL="http://127.0.0.1:13456"
+export ANTHROPIC_API_KEY="any-string"
+claude
+```
+
+That's it! Your setup is complete.
+
+## Usage Guide
+
+### Step 1: Add Providers
+
+Navigate to **Providers** tab → Click **"Add Provider"**
+
+#### Example: Add ZenMux Provider
+1. Select provider type: **ZenMux**
+2. Enter provider name: `zenmux`
+3. Enter API key: `your-zenmux-api-key`
+4. Click **"Add Provider"**
+
+#### Example: Add OpenAI Provider
+1. Select provider type: **OpenAI**
+2. Enter provider name: `openai`
+3. Enter API key: `sk-...`
+4. Click **"Add Provider"**
+
+#### Example: Add z.ai Provider
+1. Select provider type: **z.ai**
+2. Enter provider name: `zai`
+3. Enter API key: `your-zai-api-key`
+4. Click **"Add Provider"**
+
+**Supported Providers**:
+- Anthropic-compatible: Anthropic, ZenMux, z.ai, Minimax, Kimi
+- OpenAI-compatible: OpenAI, OpenRouter, Groq, Together, Fireworks, Deepinfra, Cerebras, Nebius, NovitaAI, Baseten
+
+### Step 2: Add Model Mappings
+
+Navigate to **Models** tab → Click **"Add Model"**
+
+#### Example: Minimax M2 (Ultra-fast, Low Cost)
+1. Model Name: `minimax-m2`
+2. Add mapping:
+   - Provider: `minimax`
+   - Actual Model: `MiniMax M2`
+   - Priority: `1`
+3. Click **"Add Model"**
+
+> **Why Minimax M2?** - $0.30/$1.20 per M tokens (8% of Claude Sonnet 4.5 cost), 100 TPS throughput, MoE architecture
+
+#### Example: GLM-4.6 with Fallback (Cost Optimized)
+1. Model Name: `glm-4.6`
+2. Add mappings:
+   - **Mapping 1** (Primary):
+     - Provider: `zai`
+     - Actual Model: `glm-4.6`
+     - Priority: `1`
+   - **Mapping 2** (Fallback):
+     - Provider: `openrouter`
+     - Actual Model: `z-ai/glm-4.6`
+     - Priority: `2`
+3. Click **"+ Fallback Provider Add"** to add more fallbacks
+4. Click **"Add Model"**
+
+> **How Fallback Works**: If `zai` provider fails, automatically falls back to `openrouter`
+>
+> **GLM-4.6 Pricing**: $0.60/$2.20 per M tokens (90% cheaper than Claude Sonnet 4.5), 200K context window
+
+### Step 3: Configure Router
+
+Navigate to **Router** tab
+
+Configure routing rules (auto-saves on change!):
+- **Default Model**: `minimax-m2` (general tasks - ultra-fast, 8% of Claude cost)
+- **Think Model**: `kimi-k2` (plan mode with reasoning - 256K context)
+- **Background Model**: `glm-4.5-air` (simple background tasks)
+- **WebSearch Model**: `glm-4.6` (web search tasks)
+- **Auto-map Regex Pattern**: `^claude-` (transform Claude models before routing)
+- **Background Task Regex Pattern**: `(?i)claude.*haiku` (detect background tasks)
+
+### Step 3.5: Configure Regex Patterns (Optional)
+
+Navigate to **Settings** tab for centralized regex management:
+
+- **Auto-mapping Pattern**: Regex to match models for transformation (e.g., `^claude-`)
+  - Matched models are transformed to the default model
+  - Then routing logic (WebSearch/Think/Background) is applied
+
+- **Background Task Pattern**: Regex to detect background tasks (e.g., `(?i)claude.*haiku`)
+  - Matches against the ORIGINAL model name (before auto-mapping)
+  - Matched models use the background model
+
+### Step 4: Save Configuration
+
+Click **"💾 Save to Server"** to save configuration to disk, or **"🔄 Save & Restart"** to save and restart the server.
+
+> **Note**: Router configuration auto-saves to localStorage on change, but you need to click "Save to Server" to persist to disk.
+
+### Step 5: Test Your Setup
+
+Navigate to **Test** tab:
+1. Select a model (e.g., `minimax-m2` or `glm-4.6`)
+2. Enter a message: `Hello, test message`
+3. Click **"Send Message"**
+4. View the response and check routing logs
+
+## Routing Logic
+
+**Flow**: Auto-map (transform) → WebSearch > Subagent > Think > Background > Default
+
+### 0. Auto-mapping (Model Name Transformation)
+- **Trigger**: Model name matches `auto_map_regex` pattern
+- **Example**: Request with `model="claude-4-5-sonnet"` and regex `^claude-`
+- **Action**: Transform `claude-4-5-sonnet` → `minimax-m2` (default model)
+- **Then**: Continue to routing logic below
+- **Configuration**: Set in Router or Settings tab
+
+> **Key Point**: Auto-mapping is NOT a routing decision - it transforms the model name BEFORE routing logic is applied.
+
+### 1. WebSearch (Highest Priority)
+- **Trigger**: Request contains `web_search` tool in tools array
+- **Example**: Claude Code using web search tool
+- **Routes to**: `websearch` model (e.g., GLM-4.6)
+
+### 2. Subagent Model
+- **Trigger**: System prompt contains `<CCM-SUBAGENT-MODEL>model-name</CCM-SUBAGENT-MODEL>` tag
+- **Example**: AI agent specifying model for sub-task
+- **Routes to**: Specified model (tag auto-removed)
+
+### 3. Think Mode
+- **Trigger**: Request has `thinking` field with `type: "enabled"`
+- **Example**: Claude Code Plan Mode (`/plan`)
+- **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
+
+### 4. Background Tasks
+- **Trigger**: ORIGINAL model name matches `background_regex` pattern
+- **Default Pattern**: `(?i)claude.*haiku` (case-insensitive)
+- **Example**: Request with `model="claude-4-5-haiku"` (checked BEFORE auto-mapping)
+- **Routes to**: `background` model (e.g., GLM-4.5-air)
+- **Configuration**: Set in Router or Settings tab
+
+> **Important**: Background detection uses the ORIGINAL model name, not the auto-mapped one.
+
+### 5. Default (Fallback)
+- **Trigger**: No routing conditions matched
+- **Routes to**: Transformed model name (if auto-mapped) or original model name
+
+## Routing Examples
+
+### Example 1: Claude Haiku with Web Search
+```
+Request: model="claude-4-5-haiku", tools=[web_search]
+Config: auto_map_regex="^claude-", background_regex="(?i)claude.*haiku", websearch="glm-4.6"
+
+Flow:
+1. Auto-map: "claude-4-5-haiku" → "minimax-m2" (transformed)
+2. WebSearch check: tools has web_search → Route to "glm-4.6"
+Result: glm-4.6 (websearch model)
+```
+
+### Example 2: Claude Haiku (No Special Conditions)
+```
+Request: model="claude-4-5-haiku"
+Config: auto_map_regex="^claude-", background_regex="(?i)claude.*haiku", background="glm-4.5-air"
+
+Flow:
+1. Auto-map: "claude-4-5-haiku" → "minimax-m2" (transformed)
+2. WebSearch check: No web_search tool
+3. Think check: No thinking field
+4. Background check on ORIGINAL: "claude-4-5-haiku" matches "(?i)claude.*haiku" → Route to "glm-4.5-air"
+Result: glm-4.5-air (background model)
+```
+
+### Example 3: Claude Sonnet with Think Mode
+```
+Request: model="claude-4-5-sonnet", thinking={type:"enabled"}
+Config: auto_map_regex="^claude-", think="kimi-k2-thinking"
+
+Flow:
+1. Auto-map: "claude-3-5-sonnet" → "minimax-m2" (transformed)
+2. WebSearch check: No web_search tool
+3. Think check: thinking.type="enabled" → Route to "kimi-k2-thinking"
+Result: kimi-k2-thinking (think model)
+```
+
+### Example 4: Non-Claude Model (No Auto-mapping)
+```
+Request: model="glm-4.6"
+Config: auto_map_regex="^claude-", default="minimax-m2"
+
+Flow:
+1. Auto-map: "glm-4.6" doesn't match "^claude-" → No transformation
+2. WebSearch check: No web_search tool
+3. Think check: No thinking field
+4. Background check: "glm-4.6" doesn't match background regex
+5. Default: Use model name as-is
+Result: glm-4.6 (original model name, routed through model mappings)
+```
+
+## Configuration Examples
+
+### Cost Optimized Setup (~$0.35/1M tokens avg)
+
+**Providers**:
+- Minimax (ultra-fast, ultra-cheap)
+- z.ai (GLM models)
+- Kimi (for thinking tasks)
+- OpenRouter (fallback)
+
+**Models**:
+- `minimax-m2` → Minimax (`MiniMax M2`) — $0.30/$1.20 per M tokens
+- `glm-4.6` → z.ai (`glm-4.6`) with OpenRouter fallback — $0.60/$2.20 per M tokens
+- `glm-4.5-air` → z.ai (`glm-4.5-air`) — Lower cost than GLM-4.6
+- `kimi-k2-thinking` → Kimi (`kimi-k2-thinking`) — Reasoning optimized, 256K context
+
+**Routing**:
+- Default: `minimax-m2` (8% of Claude cost, 100 TPS)
+- Think: `kimi-k2-thinking` (thinking model with 256K context)
+- Background: `glm-4.5-air` (simple tasks)
+- WebSearch: `glm-4.6` (web search + reasoning)
+- Auto-map Regex: `^claude-` (transform Claude models to minimax-m2)
+- Background Regex: `(?i)claude.*haiku` (detect Haiku models for background)
+
+**Cost Comparison** (per 1M tokens):
+- Minimax M2: $0.30 input / $1.20 output
+- GLM-4.6: $0.60 input / $2.20 output
+- Claude Sonnet 4.5: $3.00 input / $15.00 output
+- **Savings**: ~90% cost reduction vs Claude
+
+### Quality Focused Setup
+
+**Providers**:
+- Anthropic (native Claude)
+- OpenRouter (for fallbacks)
+
+**Models**:
+- `claude-sonnet-4-5` → Anthropic native
+- `claude-opus-4-1` → Anthropic native
+
+**Routing**:
+- Default: `claude-sonnet-4-5`
+- Think: `claude-opus-4-1`
+- Background: `claude-haiku-4-5`
+- WebSearch: `claude-sonnet-4-5`
+
+### Multi-Provider with Fallback
+
+**Providers**:
+- Minimax (primary, ultra-fast)
+- z.ai (for GLM models)
+- OpenRouter (fallback for all)
+
+**Models**:
+- `minimax-m2`:
+  - Priority 1: Minimax → `MiniMax-M2`
+  - Priority 2: OpenRouter → `minimax/minimax-m2` (if available)
+- `glm-4.6`:
+  - Priority 1: z.ai → `glm-4.6`
+  - Priority 2: OpenRouter → `z-ai/glm-4.6`
+
+**Routing**:
+- Default: `minimax-m2` (falls back to OpenRouter if Minimax fails)
+- Think: `glm-4.6` (with OpenRouter fallback)
+- Background: `glm-4.5-air`
+- WebSearch: `glm-4.6`
+
+## Advanced Features
+
+### Auto-mapping with Regex
+
+Automatically transform model names before routing logic is applied:
+
+1. Navigate to **Router** or **Settings** tab
+2. Set **Auto-map Regex Pattern**: `^claude-`
+3. All requests for `claude-*` models will be transformed to your default model
+4. Then routing logic (WebSearch/Think/Background) is applied to the transformed request
+
+**Use Cases**:
+- Transform all Claude models to cost-optimized alternative: `^claude-`
+- Transform both Claude and GPT models: `^(claude-|gpt-)`
+- Transform specific models only: `^(claude-sonnet|claude-opus)`
+
+**Example**:
+```
+Config: auto_map_regex="^claude-", default="minimax-m2", websearch="glm-4.6"
+Request: model="claude-sonnet", tools=[web_search]
+
+Flow:
+1. Transform: "claude-sonnet" → "minimax-m2"
+2. Route: WebSearch detected → "glm-4.6"
+Result: glm-4.6 model
+```
+
+### Background Task Detection with Regex
+
+Automatically detect and route background tasks using regex patterns:
+
+1. Navigate to **Router** or **Settings** tab
+2. Set **Background Regex Pattern**: `(?i)claude.*haiku`
+3. All requests matching this pattern will use your background model
+
+**Use Cases**:
+- Route all Haiku models to cheap background model: `(?i)claude.*haiku`
+- Route specific model tiers: `(?i)(haiku|flash|mini)`
+- Custom patterns for your naming convention
+
+**Important**: Background detection checks the ORIGINAL model name (before auto-mapping)
+
+### Streaming Responses
+
+Full Server-Sent Events (SSE) streaming support:
+
+```bash
+curl -X POST http://127.0.0.1:13456/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "minimax-m2",
+    "max_tokens": 1000,
+    "stream": true,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+**Supported Providers**:
+- ✅ Anthropic-compatible: ZenMux, z.ai, Kimi, Minimax
+- ✅ OpenAI-compatible: OpenAI, OpenRouter, Groq, Together, Fireworks, etc.
+
+### Provider Failover
+
+Automatic failover with priority-based routing:
+
+```toml
+[[models]]
+name = "glm-4.6"
+
+[[models.mappings]]
+actual_model = "glm-4.6"
+priority = 1
+provider = "zai"
+
+[[models.mappings]]
+actual_model = "z-ai/glm-4.6"
+priority = 2
+provider = "openrouter"
+```
+
+If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
+
+## CLI Usage
+
+### Start the Server
+
+```bash
+# Start with default config (config/default.toml)
+ccm start
+
+# Start with custom config
+ccm start --config path/to/config.toml
+
+# Start on custom port
+ccm start --port 8080
+```
+
+### Run in Background
+
+#### Using nohup (Unix/Linux/macOS)
+```bash
+# Start in background
+nohup ccm start > ccm.log 2>&1 &
+
+# Check if running
+ps aux | grep ccm
+
+# Stop the server
+pkill ccm
+```
+
+#### Using systemd (Linux)
+Create `/etc/systemd/system/ccm.service`:
+
+```ini
+[Unit]
+Description=Claude Code Mux
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/claude-code-mux
+ExecStart=/path/to/claude-code-mux/target/release/ccm start
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+```bash
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable on boot
+sudo systemctl enable ccm
+
+# Start service
+sudo systemctl start ccm
+
+# Check status
+sudo systemctl status ccm
+
+# View logs
+sudo journalctl -u ccm -f
+```
+
+#### Using launchd (macOS)
+Create `~/Library/LaunchAgents/com.ccm.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ccm</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/path/to/claude-code-mux/target/release/ccm</string>
+        <string>start</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/ccm.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/ccm.error.log</string>
+</dict>
+</plist>
+```
+
+Then:
+```bash
+# Load and start
+launchctl load ~/Library/LaunchAgents/com.ccm.plist
+
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.ccm.plist
+
+# Check status
+launchctl list | grep ccm
+```
+
+### Other Commands
+
+```bash
+# Show version
+ccm --version
+
+# Show help
+ccm --help
+```
+
+## Supported Features
+
+- ✅ Full Anthropic API compatibility (`/v1/messages`)
+- ✅ Token counting endpoint (`/v1/messages/count_tokens`)
+- ✅ Extended thinking (Plan Mode support)
+- ✅ **Streaming responses** (SSE format)
+- ✅ System prompts (string and array formats)
+- ✅ Tool calling
+- ✅ Vision (image inputs)
+- ✅ **Auto-mapping** with regex patterns
+- ✅ **Provider failover** with priority-based routing
+- ✅ Auto-strip incompatible parameters for OpenAI models
+
+## Troubleshooting
+
+### Check if server is running
+```bash
+curl http://127.0.0.1:13456/api/config/json
+```
+
+### Enable debug logging
+Set environment variable:
+```bash
+RUST_LOG=debug ccm start
+```
+
+Or update `config/default.toml`:
+```toml
+[server]
+log_level = "debug"
+```
+
+### Test routing directly
+```bash
+curl -X POST http://127.0.0.1:13456/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "minimax-m2",
+    "max_tokens": 100,
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+### View real-time logs
+```bash
+# If running with RUST_LOG
+RUST_LOG=info ccm start
+
+# Check system logs
+tail -f ~/.claude-code-mux/ccm.log
+```
+
+## Performance
+
+- **Memory**: ~5MB RAM (vs ~50MB for Node.js routers)
+- **Startup**: <100ms cold start
+- **Routing**: <1ms overhead per request
+- **Throughput**: Handles 1000+ req/s on modern hardware
+- **Streaming**: Zero-copy SSE streaming with minimal latency
+
+## Documentation
+
+- [Design Principles](docs/design-principles.md) - Claude Code Mux design philosophy and UX guidelines
+- [URL-based State Management](docs/url-state-management.md) - Admin UI URL-based state management pattern
+- [LocalStorage-based State Management](docs/localstorage-state-management.md) - Admin UI localStorage-based client state management
+
+## Contributing
+
+We love contributions! Here's how you can help:
+
+### 🐛 Report Bugs
+Found a bug? [Open an issue](https://github.com/9j/claude-code-mux/issues/new) with:
+- Clear description of the problem
+- Steps to reproduce
+- Expected vs actual behavior
+- Your environment (OS, Rust version)
+
+### 💡 Suggest Features
+Have an idea? [Start a discussion](https://github.com/9j/claude-code-mux/discussions) or open an issue with:
+- Use case description
+- Proposed solution
+- Alternative approaches considered
+
+### 🔧 Submit Pull Requests
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests: `cargo test`
+5. Run formatting: `cargo fmt`
+6. Run linting: `cargo clippy`
+7. Commit with clear message
+8. Push and create a Pull Request
+
+### 📝 Improve Documentation
+- Fix typos or unclear explanations
+- Add examples or use cases
+- Translate docs to other languages
+- Create tutorials or guides
+
+### 🌟 Support the Project
+- Star the repo on GitHub
+- Share with others who might benefit
+- Write blog posts or create videos
+- Join discussions and help other users
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+## License
+
+MIT License - see [LICENSE](LICENSE)
+
+## Acknowledgments
+
+- [claude-code-router](https://github.com/musistudio/claude-code-router) - Original TypeScript implementation inspiration
+- [Anthropic](https://anthropic.com) - Claude API
+- Rust community for amazing tools and libraries
+
+---
+
+**Made with ⚡️ in Rust**
