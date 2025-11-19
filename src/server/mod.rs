@@ -27,10 +27,11 @@ pub struct AppState {
     pub router: Router,
     pub provider_registry: Arc<ProviderRegistry>,
     pub token_store: TokenStore,
+    pub config_path: std::path::PathBuf,
 }
 
 /// Start the HTTP server
-pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
+pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) -> anyhow::Result<()> {
     let router = Router::new(config.clone());
 
     // Initialize OAuth token store FIRST (needed by provider registry)
@@ -58,6 +59,7 @@ pub async fn start_server(config: AppConfig) -> anyhow::Result<()> {
         router,
         provider_registry,
         token_store,
+        config_path,
     });
 
     // Build router
@@ -168,9 +170,12 @@ struct ConfigUpdate {
     websearch_model: Option<String>,
 }
 
-async fn update_config(Form(update): Form<ConfigUpdate>) -> Result<Html<String>, AppError> {
+async fn update_config(
+    State(state): State<Arc<AppState>>,
+    Form(update): Form<ConfigUpdate>,
+) -> Result<Html<String>, AppError> {
     // Read current config
-    let config_path = std::path::Path::new("config/default.toml");
+    let config_path = &state.config_path;
     let config_str = std::fs::read_to_string(config_path)
         .map_err(|e| AppError::ParseError(format!("Failed to read config: {}", e)))?;
 
@@ -254,14 +259,14 @@ fn remove_null_values(value: &mut serde_json::Value) {
 
 /// Update configuration via JSON (for admin UI)
 async fn update_config_json(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Json(mut new_config): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, AppError> {
     // Remove null values (TOML doesn't support null)
     remove_null_values(&mut new_config);
 
     // Write back to config file
-    let config_path = std::path::Path::new("config/default.toml");
+    let config_path = &state.config_path;
 
     // Read current config
     let config_str = std::fs::read_to_string(config_path)

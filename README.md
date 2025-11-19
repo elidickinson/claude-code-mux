@@ -214,6 +214,10 @@ ccm start
 
 The server will start on `http://127.0.0.1:13456` with a web-based admin UI.
 
+> **💡 First-time users**: A default configuration file will be automatically created at:
+> - **Unix/Linux/macOS**: `~/.claude-code-mux/config.toml`
+> - **Windows**: `%USERPROFILE%\.claude-code-mux\config.toml`
+
 ### 2. Open Admin UI
 
 Navigate to:
@@ -677,7 +681,8 @@ If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
 ### Start the Server
 
 ```bash
-# Start with default config (config/default.toml)
+# Start with default config (~/.claude-code-mux/config.toml)
+# Config file is automatically created if it doesn't exist
 ccm start
 
 # Start with custom config
@@ -686,6 +691,10 @@ ccm start --config path/to/config.toml
 # Start on custom port
 ccm start --port 8080
 ```
+
+**Default Config Location**:
+- **Unix/Linux/macOS**: `~/.claude-code-mux/config.toml`
+- **Windows**: `%USERPROFILE%\.claude-code-mux\config.toml` (e.g., `C:\Users\<username>\.claude-code-mux\config.toml`)
 
 ### Run in Background
 
@@ -814,7 +823,7 @@ Set environment variable:
 RUST_LOG=debug ccm start
 ```
 
-Or update `config/default.toml`:
+Or update your config file (`~/.claude-code-mux/config.toml`):
 ```toml
 [server]
 log_level = "debug"

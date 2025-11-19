@@ -17,9 +17,9 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Path to configuration file
-    #[arg(short, long, default_value = "config/default.toml")]
-    config: PathBuf,
+    /// Path to configuration file (defaults to ~/.claude-code-mux/config.toml)
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -49,8 +49,15 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
+    // Get config path (use default if not specified)
+    let config_path = match &cli.config {
+        Some(path) => path.clone(),
+        None => cli::AppConfig::default_path()
+            .unwrap_or_else(|_| PathBuf::from("config/default.toml")),
+    };
+
     // Load configuration
-    let config = cli::AppConfig::from_file(&cli.config)?;
+    let config = cli::AppConfig::from_file(&config_path)?;
 
     match cli.command {
         Commands::Start { port } => {
@@ -90,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
             println!("Press Ctrl+C to stop");
 
             // Cleanup PID file on exit
-            let result = server::start_server(config).await;
+            let result = server::start_server(config, config_path).await;
             let _ = pid::cleanup_pid();
             result?;
         }
@@ -170,9 +177,9 @@ async fn main() -> anyhow::Result<()> {
             let mut cmd = Command::new(&exe_path);
             cmd.arg("start");
 
-            // Pass the config file if it was specified
-            if cli.config != PathBuf::from("config/default.toml") {
-                cmd.arg("--config").arg(cli.config);
+            // Pass the config file if it was explicitly specified
+            if let Some(config_path) = cli.config {
+                cmd.arg("--config").arg(config_path);
             }
 
             // Spawn detached process
