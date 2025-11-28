@@ -75,8 +75,12 @@ fn write_routing_info(model: &str, provider: &str, route_type: &crate::models::R
             "recent": unique_recent
         });
 
-        if let Err(e) = std::fs::write(file_path, serde_json::to_string(&routing_info).unwrap()) {
-            tracing::debug!("Failed to write routing info: {}", e);
+        if let Ok(json) = serde_json::to_string(&routing_info) {
+            if let Err(e) = std::fs::write(file_path, json) {
+                tracing::debug!("Failed to write routing info: {}", e);
+            }
+        } else {
+            tracing::debug!("Failed to serialize routing info");
         }
     }
 }
