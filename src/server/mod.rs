@@ -33,15 +33,48 @@ pub struct AppState {
 
 /// Write routing information to file for statusline script
 fn write_routing_info(model: &str, provider: &str, route_type: &crate::models::RouteType) {
-    let routing_info = serde_json::json!({
-        "model": model,
-        "provider": provider,
-        "route_type": route_type.to_string(),
-        "timestamp": Local::now().format("%H:%M:%S").to_string()
-    });
-
     if let Some(home) = dirs::home_dir() {
         let file_path = home.join(".claude-code-mux/last_routing.json");
+
+        // Read existing history or create new
+        let mut recent = Vec::new();
+        if let Ok(existing_content) = std::fs::read_to_string(&file_path) {
+            if let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_content) {
+                if let Some(existing_recent) = existing.get("recent").and_then(|r| r.as_array()) {
+                    // Convert existing recent entries to string format
+                    for item in existing_recent {
+                        if let Some(entry) = item.as_str() {
+                            recent.push(entry.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add current model/provider to the front
+        let current_entry = format!("{}@{}", model, provider);
+        recent.insert(0, current_entry);
+
+        // Keep only last 3 unique entries
+        let mut unique_recent = Vec::new();
+        for entry in recent {
+            if !unique_recent.contains(&entry) {
+                unique_recent.push(entry);
+                if unique_recent.len() >= 3 {
+                    break;
+                }
+            }
+        }
+
+        // Create routing info with history
+        let routing_info = serde_json::json!({
+            "model": model,
+            "provider": provider,
+            "route_type": route_type.to_string(),
+            "timestamp": Local::now().format("%H:%M:%S").to_string(),
+            "recent": unique_recent
+        });
+
         if let Err(e) = std::fs::write(file_path, serde_json::to_string(&routing_info).unwrap()) {
             tracing::debug!("Failed to write routing info: {}", e);
         }
