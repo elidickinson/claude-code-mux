@@ -607,7 +607,23 @@ impl OpenAIProvider {
             .map(|s| s.to_string())
     }
 
-    /// Transform Anthropic request to OpenAI format
+    /// Transform Anthropic request format to OpenAI Chat Completions format.
+    ///
+    /// This handles the structural differences between the two APIs:
+    ///
+    /// # Message Content Transformation
+    /// - Anthropic: `content` can be string or array of typed blocks (text, image, tool_use, tool_result)
+    /// - OpenAI: `content` can be string or array of parts (text, image_url), with tools in separate fields
+    ///
+    /// # Key Transformations
+    /// - `tool_use` blocks → `tool_calls` array on assistant messages
+    /// - `tool_result` blocks → separate `tool` role messages (must come BEFORE user content)
+    /// - `image` blocks → `image_url` content parts with data URI encoding
+    /// - `thinking` blocks → dropped (OpenAI doesn't support this)
+    ///
+    /// # Tool Definition Mapping
+    /// - Anthropic: `{ name, description, input_schema }`
+    /// - OpenAI: `{ type: "function", function: { name, description, parameters } }`
     fn transform_request(&self, request: &AnthropicRequest) -> Result<OpenAIRequest, ProviderError> {
         let mut openai_messages = Vec::new();
 
@@ -716,10 +732,20 @@ impl OpenAIProvider {
                         }
                     }
 
-                    // IMPORTANT: OpenAI requires tool messages to come BEFORE user messages
-                    // If this message has both tool_results and content, we must:
-                    // 1. First emit tool messages for the results
-                    // 2. Then emit a user message with the content
+                    // OpenAI Message Ordering for Tool Results
+                    // ==========================================
+                    // OpenAI requires tool response messages to appear BEFORE user content
+                    // when a user message contains both tool_results and text content.
+                    //
+                    // In Anthropic's format, a single user message can contain mixed content:
+                    //   { role: "user", content: [tool_result, tool_result, text] }
+                    //
+                    // OpenAI requires separate messages in this order:
+                    //   1. { role: "tool", tool_call_id: "...", content: "..." }  // for each result
+                    //   2. { role: "user", content: "..." }  // user's text content
+                    //
+                    // This is critical for parallel tool calls where the user provides multiple
+                    // tool results and then adds additional context or instructions.
 
                     // Add separate tool result messages FIRST
                     for (tool_use_id, result_content) in tool_results {
@@ -789,7 +815,16 @@ impl OpenAIProvider {
         })
     }
 
-    /// Transform OpenAI response to Anthropic format
+    /// Transform OpenAI Chat Completions response to Anthropic Messages format.
+    ///
+    /// # Response Structure Mapping
+    /// - OpenAI: `{ id, model, choices: [{ message: { content, tool_calls }, finish_reason }], usage }`
+    /// - Anthropic: `{ id, model, content: [...blocks], stop_reason, usage }`
+    ///
+    /// # Content Extraction Priority
+    /// 1. `message.content` (string or parts array)
+    /// 2. `message.reasoning` (for GLM/Cerebras models with chain-of-thought)
+    /// 3. `message.tool_calls` → converted to `tool_use` content blocks
     fn transform_response(&self, response: OpenAIResponse) -> ProviderResponse {
         let choice = response.choices.into_iter().next()
             .expect("OpenAI response must have at least one choice");
@@ -825,7 +860,15 @@ impl OpenAIProvider {
             content_blocks.push(ContentBlock::Text { text });
         }
 
-        // Transform tool_calls to Anthropic tool_use format
+        // Non-streaming Tool Calls Transformation
+        // ========================================
+        // OpenAI returns tool_calls as an array in the message:
+        //   { id: "call_xxx", type: "function", function: { name: "...", arguments: "{...}" } }
+        //
+        // We transform each to Anthropic's tool_use content block:
+        //   { type: "tool_use", id: "...", name: "...", input: {...} }
+        //
+        // Note: OpenAI's `arguments` is a JSON string that we parse into `input` object.
         if let Some(tool_calls) = choice.message.tool_calls {
             for tool_call in tool_calls {
                 // Parse arguments from JSON string
@@ -886,8 +929,25 @@ impl OpenAIProvider {
         }
     }
 
-    /// Transform OpenAI streaming chunk to Anthropic format
-    /// Returns raw SSE-formatted bytes (event: type / data: json)
+    /// Transform OpenAI streaming chunk to Anthropic SSE format.
+    ///
+    /// This function converts OpenAI's Chat Completions streaming format to Anthropic's
+    /// Messages API streaming format. The transformation is stateful and handles:
+    ///
+    /// # Event Mapping (OpenAI → Anthropic)
+    /// - First chunk → `message_start` (initializes the message envelope)
+    /// - `delta.content` / `delta.reasoning` → `content_block_start` + `content_block_delta`
+    /// - `delta.tool_calls` → `content_block_start` (tool_use) + `input_json_delta` + `content_block_stop`
+    /// - `finish_reason` → `content_block_stop` + `message_delta` + `message_stop`
+    ///
+    /// # State Parameters
+    /// - `is_first`: Tracks whether we've emitted `message_start` yet
+    /// - `has_content_block`: Tracks whether a text content block is open (needs closing)
+    /// - `stream_ended`: Set to true when `finish_reason` is received (used by Cerebras workaround)
+    ///
+    /// # Provider Quirks
+    /// - GLM/Cerebras models use `reasoning` field instead of `content` for chain-of-thought
+    /// - Cerebras may close the stream without sending `finish_reason` (handled by caller)
     fn transform_openai_chunk_to_anthropic_sse(chunk: &OpenAIStreamChunk, message_id: &str, is_first: &mut bool, has_content_block: &mut bool, stream_ended: &mut bool) -> String {
         let mut output = String::new();
 
@@ -951,7 +1011,19 @@ impl OpenAIProvider {
                 output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
             }
             
-            // Handle tool calls (OpenAI function calling → Anthropic tool_use)
+            // Tool Calls Transformation (OpenAI function calling → Anthropic tool_use)
+            // ==========================================================================
+            // OpenAI sends tool calls as an array in delta.tool_calls with structure:
+            //   { id: "call_xxx", type: "function", function: { name: "...", arguments: "..." } }
+            //
+            // Anthropic expects tool_use content blocks with structure:
+            //   { type: "tool_use", id: "...", name: "...", input: {...} }
+            //
+            // For each tool call, we emit:
+            //   1. Close any open text block first
+            //   2. content_block_start (type: tool_use) with id and name
+            //   3. content_block_delta (type: input_json_delta) with parsed arguments
+            //   4. content_block_stop
             if let Some(ref tool_calls) = choice.delta.tool_calls {
                 tracing::debug!("🔧 Transforming {} tool_calls to Anthropic tool_use format", tool_calls.len());
                 
@@ -1021,7 +1093,18 @@ impl OpenAIProvider {
                 continue;
             }
 
-            // Handle finish_reason (stream end)
+            // Stream Termination (finish_reason handling)
+            // =============================================
+            // When OpenAI sends a chunk with finish_reason, we need to emit the
+            // Anthropic stream termination sequence:
+            //   1. content_block_stop (if a content block is open)
+            //   2. message_delta (with stop_reason mapped from finish_reason)
+            //   3. message_stop (signals end of message)
+            //
+            // Stop reason mapping:
+            //   - "stop" → "end_turn" (normal completion)
+            //   - "length" → "max_tokens" (hit token limit)
+            //   - "tool_calls" → "end_turn" (model wants to use tools)
             if let Some(reason) = &choice.finish_reason {
                 *stream_ended = true; // Mark that stream ended properly
                 
@@ -1359,12 +1442,22 @@ impl AnthropicProvider for OpenAIProvider {
         use futures::stream::StreamExt;
         use crate::providers::streaming::SseStream;
         use std::sync::{Arc, Mutex};
-        
+
         let message_id = format!("msg_{}", uuid::Uuid::new_v4());
-        let is_first = Arc::new(Mutex::new(true));
-        let has_content_block = Arc::new(Mutex::new(false));
-        let stream_ended_properly = Arc::new(Mutex::new(false)); // Track if finish_reason was received
-        let has_content_for_cleanup = has_content_block.clone(); // Clone before moving into closure
+
+        // Streaming State Management
+        // ===========================
+        // These flags track the state of the SSE transformation across async chunks.
+        // Using Arc<Mutex<bool>> because the closure moves into an async context.
+        //
+        // NOTE: The code reviewer suggested using AtomicBool for performance, but
+        // the mutex overhead is negligible compared to network I/O latency.
+        let is_first = Arc::new(Mutex::new(true));           // Has message_start been sent?
+        let has_content_block = Arc::new(Mutex::new(false)); // Is a text block currently open?
+        let stream_ended_properly = Arc::new(Mutex::new(false)); // Did we receive finish_reason?
+
+        // Clone refs for the stream finalization closure (Cerebras workaround)
+        let has_content_for_cleanup = has_content_block.clone();
         let stream_ended_for_cleanup = stream_ended_properly.clone();
         
         // Convert response bytes stream to SSE events
@@ -1427,7 +1520,17 @@ impl AnthropicProvider for OpenAIProvider {
         })
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
-        // Add stream finalization to handle Cerebras bug where stream closes without finish_reason
+        // Cerebras Stream Finalization Workaround
+        // ========================================
+        // Some OpenAI-compatible providers (notably Cerebras) have a bug where they
+        // close the SSE stream without sending a chunk with `finish_reason`. This
+        // leaves the Anthropic client hanging because it never receives:
+        //   - content_block_stop (to close the text block)
+        //   - message_delta (with stop_reason)
+        //   - message_stop (to signal completion)
+        //
+        // This workaround chains a final "cleanup" stream that checks if the stream
+        // ended without proper termination and emits the missing events.
         let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
             // Only send end events if stream didn't end properly AND we have an open content block
             let has_content = *has_content_for_cleanup.lock().unwrap();

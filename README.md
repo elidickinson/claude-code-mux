@@ -437,6 +437,7 @@ Navigate to **Test** tab:
 - **Trigger**: Request has `thinking` field with `type: "enabled"`
 - **Example**: Claude Code Plan Mode (`/plan`)
 - **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
+- **Note**: The `thinking` parameter is passed through to Anthropic providers, enabling extended reasoning. OpenAI-compatible providers don't support this parameter.
 
 ### 4. Background Tasks
 - **Trigger**: ORIGINAL model name matches `background_regex` pattern
