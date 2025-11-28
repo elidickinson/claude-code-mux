@@ -21,3 +21,14 @@ pub enum ProviderError {
     #[error("Authentication error: {0}")]
     AuthError(String),
 }
+
+impl ProviderError {
+    /// Check if this is a client error (4xx) that should not be retried with fallback providers
+    /// Client errors indicate invalid request parameters that won't succeed on other providers
+    pub fn is_client_error(&self) -> bool {
+        match self {
+            ProviderError::ApiError { status, .. } => *status >= 400 && *status < 500,
+            _ => false,
+        }
+    }
+}
