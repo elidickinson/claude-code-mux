@@ -221,6 +221,25 @@ struct OpenAIStreamDelta {
     tool_calls: Option<Vec<serde_json::Value>>,
 }
 
+/// State for OpenAI → Anthropic SSE transformation
+///
+/// Tracks streaming state across multiple chunks to properly transform
+/// OpenAI's incremental tool call format to Anthropic's content block format.
+#[derive(Debug, Default)]
+struct StreamTransformState {
+    /// Has message_start been emitted?
+    message_started: bool,
+    /// Is a text content block currently open?
+    text_block_open: bool,
+    /// Tool call indices that have had content_block_start emitted
+    /// Maps OpenAI tool_call index → Anthropic content_block index
+    tool_blocks: std::collections::HashMap<u32, u32>,
+    /// Next available content block index
+    next_block_index: u32,
+    /// Has finish_reason been received?
+    stream_ended: bool,
+}
+
 /// OpenAI provider implementation
 pub struct OpenAIProvider {
     name: String,
@@ -883,13 +902,23 @@ impl OpenAIProvider {
             }
         }
 
+        // Map OpenAI finish_reason to Anthropic stop_reason
+        let stop_reason = choice.finish_reason.map(|reason| {
+            match reason.as_str() {
+                "stop" => "end_turn".to_string(),
+                "length" => "max_tokens".to_string(),
+                "tool_calls" => "tool_use".to_string(),
+                _ => "end_turn".to_string(),
+            }
+        });
+
         ProviderResponse {
             id: response.id,
             r#type: "message".to_string(),
             role: "assistant".to_string(),
             content: content_blocks,
             model: response.model,
-            stop_reason: choice.finish_reason,
+            stop_reason,
             stop_sequence: None,
             usage: Usage {
                 input_tokens: response.usage.prompt_tokens,
@@ -937,23 +966,29 @@ impl OpenAIProvider {
     /// # Event Mapping (OpenAI → Anthropic)
     /// - First chunk → `message_start` (initializes the message envelope)
     /// - `delta.content` / `delta.reasoning` → `content_block_start` + `content_block_delta`
-    /// - `delta.tool_calls` → `content_block_start` (tool_use) + `input_json_delta` + `content_block_stop`
-    /// - `finish_reason` → `content_block_stop` + `message_delta` + `message_stop`
+    /// - `delta.tool_calls` → `content_block_start` (tool_use) + `input_json_delta` (incremental)
+    /// - `finish_reason` → `content_block_stop` (for all open blocks) + `message_delta` + `message_stop`
     ///
-    /// # State Parameters
-    /// - `is_first`: Tracks whether we've emitted `message_start` yet
-    /// - `has_content_block`: Tracks whether a text content block is open (needs closing)
-    /// - `stream_ended`: Set to true when `finish_reason` is received (used by Cerebras workaround)
+    /// # Tool Call Streaming
+    /// OpenAI sends tool calls incrementally:
+    /// - First chunk: `{ index: 0, id: "call_xxx", function: { name: "get_weather", arguments: "" } }`
+    /// - Next chunks: `{ index: 0, function: { arguments: "{\"loc" } }`
+    /// - More chunks: `{ index: 0, function: { arguments: "ation\":" } }`
+    ///
+    /// We transform this to Anthropic format:
+    /// - On first chunk (has id+name): emit `content_block_start` with type=tool_use
+    /// - On argument chunks: emit `content_block_delta` with partial_json
+    /// - On finish_reason: emit `content_block_stop` for all open tool blocks
     ///
     /// # Provider Quirks
     /// - GLM/Cerebras models use `reasoning` field instead of `content` for chain-of-thought
     /// - Cerebras may close the stream without sending `finish_reason` (handled by caller)
-    fn transform_openai_chunk_to_anthropic_sse(chunk: &OpenAIStreamChunk, message_id: &str, is_first: &mut bool, has_content_block: &mut bool, stream_ended: &mut bool) -> String {
+    fn transform_openai_chunk_to_anthropic_sse(chunk: &OpenAIStreamChunk, message_id: &str, state: &mut StreamTransformState) -> String {
         let mut output = String::new();
 
         // First chunk: emit message_start
-        if *is_first {
-            *is_first = false;
+        if !state.message_started {
+            state.message_started = true;
             let message_start = serde_json::json!({
                 "type": "message_start",
                 "message": {
@@ -984,10 +1019,11 @@ impl OpenAIProvider {
                 if text.is_empty() {
                     continue;
                 }
-                
-                // Emit content_block_start if this is the first content
-                if !*has_content_block {
-                    *has_content_block = true;
+
+                // Emit content_block_start if this is the first text content
+                if !state.text_block_open {
+                    state.text_block_open = true;
+                    state.next_block_index = 1; // Text block is always index 0
                     let block_start = serde_json::json!({
                         "type": "content_block_start",
                         "index": 0,
@@ -1010,106 +1046,113 @@ impl OpenAIProvider {
                 });
                 output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
             }
-            
+
             // Tool Calls Transformation (OpenAI function calling → Anthropic tool_use)
             // ==========================================================================
-            // OpenAI sends tool calls as an array in delta.tool_calls with structure:
-            //   { id: "call_xxx", type: "function", function: { name: "...", arguments: "..." } }
+            // OpenAI sends tool calls incrementally:
+            //   First chunk: { index: 0, id: "call_xxx", function: { name: "...", arguments: "" } }
+            //   Next chunks: { index: 0, function: { arguments: "{\"loc" } }
             //
-            // Anthropic expects tool_use content blocks with structure:
-            //   { type: "tool_use", id: "...", name: "...", input: {...} }
-            //
-            // For each tool call, we emit:
-            //   1. Close any open text block first
-            //   2. content_block_start (type: tool_use) with id and name
-            //   3. content_block_delta (type: input_json_delta) with parsed arguments
-            //   4. content_block_stop
+            // Anthropic expects:
+            //   content_block_start: { type: "tool_use", id: "...", name: "...", input: {} }
+            //   content_block_delta: { type: "input_json_delta", partial_json: "..." }
+            //   content_block_stop: (only at finish_reason)
             if let Some(ref tool_calls) = choice.delta.tool_calls {
-                tracing::debug!("🔧 Transforming {} tool_calls to Anthropic tool_use format", tool_calls.len());
-                
-                // First, close any open text content block
-                if *has_content_block {
+                // Close text block if open (tool calls come after text)
+                if state.text_block_open {
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": 0
                     });
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
-                    *has_content_block = false;
+                    state.text_block_open = false;
                 }
-                
-                // Transform each tool call to Anthropic format
-                for (idx, tool_call) in tool_calls.iter().enumerate() {
-                    // Extract tool info
-                    if let Some(ref function) = tool_call.get("function") {
-                        let default_tool_id = format!("tool_{}", idx);
+
+                for tool_call in tool_calls {
+                    // Get the tool call index from OpenAI
+                    let tool_index = tool_call.get("index")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as u32;
+
+                    // Check if this is the first chunk for this tool (has id and name)
+                    let has_id = tool_call.get("id").and_then(|v| v.as_str()).is_some();
+                    let has_name = tool_call.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        .is_some();
+
+                    if has_id && has_name && !state.tool_blocks.contains_key(&tool_index) {
+                        // First chunk for this tool: emit content_block_start
                         let tool_id = tool_call.get("id")
                             .and_then(|v| v.as_str())
-                            .unwrap_or(&default_tool_id);
-                        let tool_name = function.get("name")
-                            .and_then(|v| v.as_str())
+                            .unwrap_or("tool_0");
+                        let tool_name = tool_call.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
                             .unwrap_or("unknown");
-                        let tool_args = function.get("arguments")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("{}");
-                        
-                        tracing::debug!("🔨 Tool: {} (id: {})", tool_name, tool_id);
-                        
-                        // Parse arguments to validate JSON
-                        let tool_input: serde_json::Value = serde_json::from_str(tool_args)
-                            .unwrap_or(serde_json::json!({}));
-                        
-                        // Send tool_use content_block_start
+
+                        let block_index = state.next_block_index;
+                        state.tool_blocks.insert(tool_index, block_index);
+                        state.next_block_index += 1;
+
+                        tracing::debug!("🔧 Tool start: {} (id: {}) at block index {}", tool_name, tool_id, block_index);
+
                         let block_start = serde_json::json!({
                             "type": "content_block_start",
-                            "index": idx + 1,  // Index after text content
+                            "index": block_index,
                             "content_block": {
                                 "type": "tool_use",
                                 "id": tool_id,
-                                "name": tool_name
+                                "name": tool_name,
+                                "input": {}
                             }
                         });
                         output.push_str(&format!("event: content_block_start\ndata: {}\n\n", block_start));
-                        
-                        // Send tool input as delta
-                        let input_delta = serde_json::json!({
-                            "type": "content_block_delta",
-                            "index": idx + 1,
-                            "delta": {
-                                "type": "input_json_delta",
-                                "partial_json": serde_json::to_string(&tool_input).unwrap_or_default()
-                            }
-                        });
-                        output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", input_delta));
-                        
-                        // Close tool_use block
-                        let block_stop = serde_json::json!({
-                            "type": "content_block_stop",
-                            "index": idx + 1
-                        });
-                        output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                    }
+
+                    // Emit argument chunks as input_json_delta
+                    if let Some(args) = tool_call.get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(|a| a.as_str())
+                    {
+                        if !args.is_empty() {
+                            // Get the block index for this tool
+                            let block_index = state.tool_blocks.get(&tool_index).copied()
+                                .unwrap_or_else(|| {
+                                    // Tool block wasn't started yet (shouldn't happen, but handle gracefully)
+                                    let idx = state.next_block_index;
+                                    state.tool_blocks.insert(tool_index, idx);
+                                    state.next_block_index += 1;
+                                    idx
+                                });
+
+                            let input_delta = serde_json::json!({
+                                "type": "content_block_delta",
+                                "index": block_index,
+                                "delta": {
+                                    "type": "input_json_delta",
+                                    "partial_json": args
+                                }
+                            });
+                            output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", input_delta));
+                        }
                     }
                 }
-                
-                continue;
             }
 
             // Stream Termination (finish_reason handling)
             // =============================================
             // When OpenAI sends a chunk with finish_reason, we need to emit the
             // Anthropic stream termination sequence:
-            //   1. content_block_stop (if a content block is open)
-            //   2. message_delta (with stop_reason mapped from finish_reason)
-            //   3. message_stop (signals end of message)
-            //
-            // Stop reason mapping:
-            //   - "stop" → "end_turn" (normal completion)
-            //   - "length" → "max_tokens" (hit token limit)
-            //   - "tool_calls" → "end_turn" (model wants to use tools)
+            //   1. content_block_stop (for text block if open)
+            //   2. content_block_stop (for each open tool block)
+            //   3. message_delta (with stop_reason mapped from finish_reason)
+            //   4. message_stop (signals end of message)
             if let Some(reason) = &choice.finish_reason {
-                *stream_ended = true; // Mark that stream ended properly
-                
-                if *has_content_block {
-                    // Emit content_block_stop
+                state.stream_ended = true;
+
+                // Close text block if still open
+                if state.text_block_open {
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": 0
@@ -1117,11 +1160,21 @@ impl OpenAIProvider {
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
                 }
 
+                // Close all open tool blocks
+                for (_, block_index) in &state.tool_blocks {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": block_index
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
+
                 // Emit message_delta with stop reason
+                // Mapping: OpenAI finish_reason → Anthropic stop_reason
                 let stop_reason = match reason.as_str() {
                     "stop" => "end_turn",
                     "length" => "max_tokens",
-                    "tool_calls" => "end_turn", // Tool calls also end the turn
+                    "tool_calls" => "tool_use",
                     _ => "end_turn"
                 };
                 let message_delta = serde_json::json!({
@@ -1447,61 +1500,51 @@ impl AnthropicProvider for OpenAIProvider {
 
         // Streaming State Management
         // ===========================
-        // These flags track the state of the SSE transformation across async chunks.
-        // Using Arc<Mutex<bool>> because the closure moves into an async context.
-        //
-        // NOTE: The code reviewer suggested using AtomicBool for performance, but
-        // the mutex overhead is negligible compared to network I/O latency.
-        let is_first = Arc::new(Mutex::new(true));           // Has message_start been sent?
-        let has_content_block = Arc::new(Mutex::new(false)); // Is a text block currently open?
-        let stream_ended_properly = Arc::new(Mutex::new(false)); // Did we receive finish_reason?
+        // Using Arc<Mutex<StreamTransformState>> to track state across async chunks.
+        // The state tracks: message_started, text_block_open, tool_blocks, stream_ended
+        let state = Arc::new(Mutex::new(StreamTransformState::default()));
 
-        // Clone refs for the stream finalization closure (Cerebras workaround)
-        let has_content_for_cleanup = has_content_block.clone();
-        let stream_ended_for_cleanup = stream_ended_properly.clone();
-        
+        // Clone ref for the stream finalization closure (Cerebras workaround)
+        let state_for_cleanup = state.clone();
+
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
-        
+
         // Transform OpenAI SSE events to Anthropic format
         let transformed_stream = sse_stream.then(move |result| {
             let message_id = message_id.clone();
-            let is_first = is_first.clone();
-            let has_content_block = has_content_block.clone();
-            let stream_ended_properly = stream_ended_properly.clone();
-            
+            let state = state.clone();
+
             async move {
                 match result {
                     Ok(sse_event) => {
                         tracing::debug!("📦 Received SSE chunk: {}", sse_event.data.chars().take(100).collect::<String>());
-                        
+
                         // Skip empty data
                         if sse_event.data.trim().is_empty() {
                             tracing::debug!("⏭️ Skipping empty SSE event");
                             return Ok(Bytes::new());
                         }
-                        
+
                         if sse_event.data.trim() == "[DONE]" {
                             tracing::debug!("✅ Stream finished with [DONE]");
                             return Ok(Bytes::new());
                         }
-                        
+
                         // Parse OpenAI chunk
                         match serde_json::from_str::<OpenAIStreamChunk>(&sse_event.data) {
                             Ok(chunk) => {
                                 tracing::debug!("✨ Transforming chunk with {} choices", chunk.choices.len());
-                                
+
                                 // Transform to Anthropic format (raw SSE bytes)
                                 let sse_output = Self::transform_openai_chunk_to_anthropic_sse(
                                     &chunk,
                                     &message_id,
-                                    &mut *is_first.lock().unwrap(),
-                                    &mut *has_content_block.lock().unwrap(),
-                                    &mut *stream_ended_properly.lock().unwrap()
+                                    &mut *state.lock().unwrap()
                                 );
-                                
+
                                 tracing::debug!("📤 Sending {} bytes", sse_output.len());
-                                
+
                                 // Return as raw bytes (already SSE-formatted)
                                 Ok(Bytes::from(sse_output))
                             }
@@ -1532,22 +1575,33 @@ impl AnthropicProvider for OpenAIProvider {
         // This workaround chains a final "cleanup" stream that checks if the stream
         // ended without proper termination and emits the missing events.
         let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
-            // Only send end events if stream didn't end properly AND we have an open content block
-            let has_content = *has_content_for_cleanup.lock().unwrap();
-            let ended_properly = *stream_ended_for_cleanup.lock().unwrap();
-            
-            if has_content && !ended_properly {
+            let state = state_for_cleanup.lock().unwrap();
+            let has_open_blocks = state.text_block_open || !state.tool_blocks.is_empty();
+            let ended_properly = state.stream_ended;
+
+            if has_open_blocks && !ended_properly {
                 tracing::warn!("⚠️ Stream ended without finish_reason - sending end events (Cerebras bug workaround)");
-                
+
                 let mut output = String::new();
-                
-                // Close content block
-                let block_stop = serde_json::json!({
-                    "type": "content_block_stop",
-                    "index": 0
-                });
-                output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
-                
+
+                // Close text block if open
+                if state.text_block_open {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": 0
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
+
+                // Close any open tool blocks
+                for (_, block_index) in &state.tool_blocks {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": block_index
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
+
                 // Send message_delta with end_turn
                 let message_delta = serde_json::json!({
                     "type": "message_delta",
@@ -1560,13 +1614,13 @@ impl AnthropicProvider for OpenAIProvider {
                     }
                 });
                 output.push_str(&format!("event: message_delta\ndata: {}\n\n", message_delta));
-                
+
                 // Send message_stop
                 let message_stop = serde_json::json!({
                     "type": "message_stop"
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
-                
+
                 Ok(Bytes::from(output))
             } else {
                 Ok(Bytes::new())
