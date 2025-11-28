@@ -716,7 +716,23 @@ impl OpenAIProvider {
                         }
                     }
 
-                    // Add main message with content and/or tool_calls
+                    // IMPORTANT: OpenAI requires tool messages to come BEFORE user messages
+                    // If this message has both tool_results and content, we must:
+                    // 1. First emit tool messages for the results
+                    // 2. Then emit a user message with the content
+
+                    // Add separate tool result messages FIRST
+                    for (tool_use_id, result_content) in tool_results {
+                        openai_messages.push(OpenAIMessage {
+                            role: "tool".to_string(),
+                            content: Some(OpenAIContent::String(result_content)),
+                            reasoning: None,
+                            tool_calls: None,
+                            tool_call_id: Some(tool_use_id),
+                        });
+                    }
+
+                    // Then add main message with content and/or tool_calls
                     if !content_parts.is_empty() || !tool_calls.is_empty() {
                         let content = if content_parts.is_empty() {
                             None
@@ -737,17 +753,6 @@ impl OpenAIProvider {
                             reasoning: None,
                             tool_calls: if tool_calls.is_empty() { None } else { Some(tool_calls) },
                             tool_call_id: None,
-                        });
-                    }
-
-                    // Add separate tool result messages
-                    for (tool_use_id, result_content) in tool_results {
-                        openai_messages.push(OpenAIMessage {
-                            role: "tool".to_string(),
-                            content: Some(OpenAIContent::String(result_content)),
-                            reasoning: None,
-                            tool_calls: None,
-                            tool_call_id: Some(tool_use_id),
                         });
                     }
                 }
