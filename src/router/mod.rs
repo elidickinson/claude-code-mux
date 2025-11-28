@@ -191,7 +191,10 @@ impl Router {
 
     /// Extract subagent model from system prompt tag
     /// Checks for <CCM-SUBAGENT-MODEL>model-name</CCM-SUBAGENT-MODEL> in system[1].text
-    /// and removes the tag after extraction
+    /// and removes the tag after extraction.
+    ///
+    /// First attempts to resolve the tag value as a model name in the models config.
+    /// Falls back to treating it as a direct provider model name (deprecated behavior).
     fn extract_subagent_model(&self, request: &mut AnthropicRequest) -> Option<String> {
         // Check if system exists and is Blocks type with at least 2 blocks
         let system = request.system.as_mut()?;
@@ -213,12 +216,22 @@ impl Router {
 
             if let Some(captures) = re.captures(&second_block.text) {
                 if let Some(model_match) = captures.get(1) {
-                    let model_name = model_match.as_str().to_string();
+                    let tag_value = model_match.as_str().to_string();
 
                     // Remove the tag from the text
                     second_block.text = re.replace_all(&second_block.text, "").to_string();
 
-                    return Some(model_name);
+                    // First, try to find a model with this name in the models config
+                    if let Some(_model) = self.config.models.iter().find(|m| m.name == tag_value) {
+                        // Found a configured model with this name
+                        return Some(tag_value);
+                    }
+
+                    // DEPRECATED: Fall back to treating the tag value as a direct provider model name
+                    // This behavior is deprecated and should not be relied upon.
+                    // Please configure a named model in the [models] section instead.
+                    debug!("⚠️  CCM-SUBAGENT-MODEL tag '{}' not found in models config, using as direct provider model name (deprecated)", tag_value);
+                    return Some(tag_value);
                 }
             }
         }
