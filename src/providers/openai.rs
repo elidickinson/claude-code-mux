@@ -883,13 +883,23 @@ impl OpenAIProvider {
             }
         }
 
+        // Map OpenAI finish_reason to Anthropic stop_reason
+        let stop_reason = choice.finish_reason.map(|reason| {
+            match reason.as_str() {
+                "stop" => "end_turn".to_string(),
+                "length" => "max_tokens".to_string(),
+                "tool_calls" => "tool_use".to_string(),
+                _ => "end_turn".to_string(),
+            }
+        });
+
         ProviderResponse {
             id: response.id,
             r#type: "message".to_string(),
             role: "assistant".to_string(),
             content: content_blocks,
             model: response.model,
-            stop_reason: choice.finish_reason,
+            stop_reason,
             stop_sequence: None,
             usage: Usage {
                 input_tokens: response.usage.prompt_tokens,
@@ -1118,10 +1128,11 @@ impl OpenAIProvider {
                 }
 
                 // Emit message_delta with stop reason
+                // Mapping: OpenAI finish_reason → Anthropic stop_reason
                 let stop_reason = match reason.as_str() {
                     "stop" => "end_turn",
                     "length" => "max_tokens",
-                    "tool_calls" => "end_turn", // Tool calls also end the turn
+                    "tool_calls" => "tool_use", // Model wants to execute tools
                     _ => "end_turn"
                 };
                 let message_delta = serde_json::json!({
