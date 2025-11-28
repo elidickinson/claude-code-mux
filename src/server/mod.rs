@@ -510,6 +510,9 @@ start "" "{}" start --port {}
 }
 
 /// Handle /v1/chat/completions requests (OpenAI-compatible endpoint)
+///
+/// Note: This endpoint has limited functionality. The primary use case for this proxy
+/// is Claude Code (Anthropic client) connecting via /v1/messages.
 async fn handle_openai_chat_completions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -518,6 +521,13 @@ async fn handle_openai_chat_completions(
     let model = openai_request.model.clone();
     info!("Received OpenAI-compatible request for model: {}", model);
     let start_time = std::time::Instant::now();
+
+    // Streaming is not supported for /v1/chat/completions
+    if openai_request.stream == Some(true) {
+        return Err(AppError::ParseError(
+            "Streaming is not supported for /v1/chat/completions. Use /v1/messages instead.".to_string()
+        ));
+    }
 
     // 1. Transform OpenAI request to Anthropic format
     let mut anthropic_request = openai_compat::transform_openai_to_anthropic(openai_request)
@@ -583,15 +593,6 @@ async fn handle_openai_chat_completions(
                 // Update model to actual model name
                 anthropic_request.model = mapping.actual_model.clone();
 
-                // Check if streaming is requested
-                let is_streaming = anthropic_request.stream == Some(true);
-
-                if is_streaming {
-                    // Streaming not fully implemented for OpenAI format yet
-                    info!("⚠️ Streaming requested but not fully supported for OpenAI format, falling back to non-streaming");
-                }
-
-                // Non-streaming request
                 match provider.send_message(anthropic_request.clone()).await {
                     Ok(anthropic_response) => {
                         info!("✅ Request succeeded with provider: {}", mapping.provider);
@@ -637,7 +638,6 @@ async fn handle_openai_chat_completions(
             // Update model to routed model
             anthropic_request.model = decision.model_name.clone();
 
-            // Call provider
             let anthropic_response = provider.send_message(anthropic_request)
                 .await
                 .map_err(|e| AppError::ProviderError(e.to_string()))?;
