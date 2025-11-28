@@ -517,6 +517,7 @@ async fn handle_openai_chat_completions(
 ) -> Result<Response, AppError> {
     let model = openai_request.model.clone();
     info!("Received OpenAI-compatible request for model: {}", model);
+    let start_time = std::time::Instant::now();
 
     // 1. Transform OpenAI request to Anthropic format
     let mut anthropic_request = openai_compat::transform_openai_to_anthropic(openai_request)
@@ -595,6 +596,11 @@ async fn handle_openai_chat_completions(
                     Ok(anthropic_response) => {
                         info!("✅ Request succeeded with provider: {}", mapping.provider);
 
+                        // Calculate and log metrics
+                        let latency_ms = start_time.elapsed().as_millis() as u64;
+                        let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
+                        info!("📊 {}ms {:.0}t/s", latency_ms, tok_s);
+
                         // Write routing info for statusline
                         write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
 
@@ -669,6 +675,7 @@ async fn handle_messages(
         .and_then(|m| m.as_str())
         .unwrap_or("unknown");
     info!("Received request for model: {}", model);
+    let start_time = std::time::Instant::now();
 
     // DEBUG: Log request body for debugging
     if let Ok(json_str) = serde_json::to_string_pretty(&request_json) {
@@ -798,6 +805,11 @@ async fn handle_messages(
                             // Restore original model name in response
                             response.model = original_model;
                             info!("✅ Request succeeded with provider: {}, response model: {}", mapping.provider, response.model);
+
+                            // Calculate and log metrics
+                            let latency_ms = start_time.elapsed().as_millis() as u64;
+                            let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
+                            info!("📊 {}ms {:.0}t/s", latency_ms, tok_s);
 
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
