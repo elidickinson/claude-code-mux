@@ -789,6 +789,8 @@ impl OpenAIProvider {
         let choice = response.choices.into_iter().next()
             .expect("OpenAI response must have at least one choice");
 
+        let mut content_blocks = Vec::new();
+
         // Extract text from content or reasoning (for GLM models via Cerebras)
         let text = if let Some(content) = choice.message.content {
             match content {
@@ -813,13 +815,31 @@ impl OpenAIProvider {
             String::new()
         };
 
+        // Add text content if present
+        if !text.is_empty() {
+            content_blocks.push(ContentBlock::Text { text });
+        }
+
+        // Transform tool_calls to Anthropic tool_use format
+        if let Some(tool_calls) = choice.message.tool_calls {
+            for tool_call in tool_calls {
+                // Parse arguments from JSON string
+                let input = serde_json::from_str(&tool_call.function.arguments)
+                    .unwrap_or(serde_json::json!({}));
+
+                content_blocks.push(ContentBlock::ToolUse {
+                    id: tool_call.id,
+                    name: tool_call.function.name,
+                    input,
+                });
+            }
+        }
+
         ProviderResponse {
             id: response.id,
             r#type: "message".to_string(),
             role: "assistant".to_string(),
-            content: vec![ContentBlock::Text {
-                text,
-            }],
+            content: content_blocks,
             model: response.model,
             stop_reason: choice.finish_reason,
             stop_sequence: None,
