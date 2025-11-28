@@ -599,7 +599,7 @@ async fn handle_openai_chat_completions(
                         // Calculate and log metrics
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                        info!("📊 {}ms {:.0}t/s", latency_ms, tok_s);
+                        info!("📊 {}ms {:.0}t/s {}tok", latency_ms, tok_s, anthropic_response.usage.output_tokens);
 
                         // Write routing info for statusline
                         write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
@@ -809,7 +809,7 @@ async fn handle_messages(
                             // Calculate and log metrics
                             let latency_ms = start_time.elapsed().as_millis() as u64;
                             let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                            info!("📊 {}ms {:.0}t/s", latency_ms, tok_s);
+                            info!("📊 {}ms {:.0}t/s {}tok", latency_ms, tok_s, response.usage.output_tokens);
 
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
