@@ -40,6 +40,8 @@ enum Commands {
     Init,
     /// Manage models and providers
     Model,
+    /// Install statusline script for Claude Code
+    InstallStatusline,
 }
 
 #[tokio::main]
@@ -253,6 +255,45 @@ async fn main() -> anyhow::Result<()> {
                     println!("  • {} ({})", provider.name, provider.provider_type);
                 }
             }
+        }
+        Commands::InstallStatusline => {
+            println!("📊 Installing Claude Code Statusline Script");
+            println!();
+
+            // Get home directory and create .claude-code-mux directory
+            let home = dirs::home_dir()
+                .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+            let ccm_dir = home.join(".claude-code-mux");
+            std::fs::create_dir_all(&ccm_dir)?;
+
+            // Write statusline script
+            let script_path = ccm_dir.join("statusline.sh");
+            let script_content = include_str!("../statusline.sh");
+            std::fs::write(&script_path, script_content)?;
+
+            // Make executable on Unix
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&script_path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&script_path, perms)?;
+            }
+
+            println!("✅ Statusline script installed to: {}", script_path.display());
+            println!();
+            println!("📝 To use it, add this to ~/.claude/settings.json:");
+            println!();
+            println!("   {{");
+            println!("     \"statusLine\": {{");
+            println!("       \"type\": \"command\",");
+            println!("       \"command\": \"{}\",", script_path.display());
+            println!("       \"padding\": 0");
+            println!("     }}");
+            println!("   }}");
+            println!();
+            println!("📊 The statusline will show: model@provider (route-type) HH:MM:SS");
+            println!("   Example: minimax-m2@minimax (default) 14:23:45");
         }
     }
 

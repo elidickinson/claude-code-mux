@@ -19,6 +19,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 use futures::stream::StreamExt;
+use chrono::Local;
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -28,6 +29,23 @@ pub struct AppState {
     pub provider_registry: Arc<ProviderRegistry>,
     pub token_store: TokenStore,
     pub config_path: std::path::PathBuf,
+}
+
+/// Write routing information to file for statusline script
+fn write_routing_info(model: &str, provider: &str, route_type: &crate::models::RouteType) {
+    let routing_info = serde_json::json!({
+        "model": model,
+        "provider": provider,
+        "route_type": route_type.to_string(),
+        "timestamp": Local::now().format("%H:%M:%S").to_string()
+    });
+
+    if let Some(home) = dirs::home_dir() {
+        let file_path = home.join(".claude-code-mux/last_routing.json");
+        if let Err(e) = std::fs::write(file_path, serde_json::to_string(&routing_info).unwrap()) {
+            tracing::debug!("Failed to write routing info: {}", e);
+        }
+    }
 }
 
 /// Start the HTTP server
@@ -544,6 +562,9 @@ async fn handle_openai_chat_completions(
                     Ok(anthropic_response) => {
                         info!("✅ Request succeeded with provider: {}", mapping.provider);
 
+                        // Write routing info for statusline
+                        write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+
                         // Transform Anthropic response to OpenAI format
                         let openai_response = openai_compat::transform_anthropic_to_openai(
                             anthropic_response,
@@ -704,6 +725,9 @@ async fn handle_messages(
                         Ok(stream) => {
                             info!("✅ Streaming request started with provider: {}", mapping.provider);
 
+                            // Write routing info for statusline
+                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+
                             // Convert byte stream to SSE response
                             // The provider returns raw bytes (SSE format), we pass them through
                             let sse_stream = stream.map(|result| {
@@ -731,6 +755,10 @@ async fn handle_messages(
                             // Restore original model name in response
                             response.model = original_model;
                             info!("✅ Request succeeded with provider: {}, response model: {}", mapping.provider, response.model);
+
+                            // Write routing info for statusline
+                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+
                             return Ok(Json(response).into_response());
                         }
                         Err(e) => {

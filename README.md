@@ -263,6 +263,18 @@ export ANTHROPIC_API_KEY="any-string"
 claude
 ```
 
+### 4. Optional: Install Statusline (Recommended)
+
+See which model CCM actually uses in your Claude Code statusline:
+
+```bash
+ccm install-statusline
+```
+
+Then configure in `~/.claude/settings.json` (installer shows exact config).
+
+Shows: `minimax-m2@minimax (default) 14:23:45`
+
 That's it! Your setup is complete.
 
 ## Usage Guide
@@ -730,6 +742,50 @@ provider = "openrouter"
 
 If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
 
+### Statusline Script for Claude Code
+
+Claude Code Mux includes a statusline script that shows which model and provider are actually being used for each request.
+
+#### Installation
+
+```bash
+ccm install-statusline
+```
+
+Then add to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude-code-mux/statusline.sh",
+    "padding": 0
+  }
+}
+```
+
+The installer will show you the exact configuration needed.
+
+#### What It Shows
+
+The statusline displays:
+```
+model@provider (route-type) HH:MM:SS
+```
+
+**Examples:**
+- `minimax-m2@minimax (default) 14:23:45`
+- `kimi-k2-thinking@kimi (think) 09:15:32`
+- `glm-4.5-air@zai (background) 16:42:11`
+
+This shows:
+- Which model CCM actually routed to
+- Which provider handled the request
+- The routing decision type (default/think/background/web-search)
+- When the last request was made
+
+That's it! Claude Code will automatically use the statusline script when you start a new session.
+
 ## CLI Usage
 
 ### Start the Server
@@ -849,6 +905,9 @@ ccm --version
 
 # Show help
 ccm --help
+
+# Install statusline script for Claude Code
+ccm install-statusline
 ```
 
 ## Supported Features
