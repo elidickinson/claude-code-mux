@@ -30,7 +30,8 @@ struct StreamUsageState {
     output_tokens: u32,
 }
 
-/// Parse SSE data to extract token usage from Anthropic streaming events
+/// Parse SSE data to extract token usage from streaming events
+/// Supports Anthropic, OpenAI, and Gemini formats
 fn parse_sse_usage(data: &str, state: &std::sync::Arc<std::sync::Mutex<StreamUsageState>>) {
     // Look for JSON data lines in SSE format
     for line in data.lines() {
@@ -42,28 +43,46 @@ fn parse_sse_usage(data: &str, state: &std::sync::Arc<std::sync::Mutex<StreamUsa
 
         // Try to parse as JSON
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
-            // Anthropic message_start contains input_tokens
-            if value.get("type").and_then(|t| t.as_str()) == Some("message_start") {
-                if let Some(input_tokens) = value
-                    .get("message")
-                    .and_then(|m| m.get("usage"))
-                    .and_then(|u| u.get("input_tokens"))
-                    .and_then(|t| t.as_u64())
-                {
-                    if let Ok(mut s) = state.lock() {
+            if let Ok(mut s) = state.lock() {
+                // Anthropic format: message_start contains input_tokens
+                if value.get("type").and_then(|t| t.as_str()) == Some("message_start") {
+                    if let Some(input_tokens) = value
+                        .get("message")
+                        .and_then(|m| m.get("usage"))
+                        .and_then(|u| u.get("input_tokens"))
+                        .and_then(|t| t.as_u64())
+                    {
                         s.input_tokens = input_tokens as u32;
                     }
                 }
-            }
-            // Anthropic message_delta contains output_tokens
-            else if value.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
-                if let Some(output_tokens) = value
-                    .get("usage")
-                    .and_then(|u| u.get("output_tokens"))
-                    .and_then(|t| t.as_u64())
-                {
-                    if let Ok(mut s) = state.lock() {
+                // Anthropic format: message_delta contains output_tokens
+                else if value.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
+                    if let Some(output_tokens) = value
+                        .get("usage")
+                        .and_then(|u| u.get("output_tokens"))
+                        .and_then(|t| t.as_u64())
+                    {
                         s.output_tokens = output_tokens as u32;
+                    }
+                }
+                // Gemini format: usageMetadata with prompt_token_count/candidates_token_count
+                else if let Some(usage) = value.get("usageMetadata") {
+                    if let Some(input) = usage.get("promptTokenCount").and_then(|t| t.as_u64()) {
+                        s.input_tokens = input as u32;
+                    }
+                    if let Some(output) = usage.get("candidatesTokenCount").and_then(|t| t.as_u64()) {
+                        s.output_tokens = output as u32;
+                    }
+                }
+                // OpenAI format: usage with prompt_tokens/completion_tokens (at end of stream)
+                else if let Some(usage) = value.get("usage") {
+                    if !usage.is_null() {
+                        if let Some(input) = usage.get("prompt_tokens").and_then(|t| t.as_u64()) {
+                            s.input_tokens = input as u32;
+                        }
+                        if let Some(output) = usage.get("completion_tokens").and_then(|t| t.as_u64()) {
+                            s.output_tokens = output as u32;
+                        }
                     }
                 }
             }
