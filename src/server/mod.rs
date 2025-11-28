@@ -2,7 +2,7 @@ mod openai_compat;
 mod oauth_handlers;
 
 use crate::cli::AppConfig;
-use crate::models::AnthropicRequest;
+use crate::models::{AnthropicRequest, RouteType};
 use crate::router::Router;
 use crate::providers::ProviderRegistry;
 use crate::auth::TokenStore;
@@ -16,10 +16,140 @@ use axum::{
     Form, Json, Router as AxumRouter,
 };
 use std::sync::Arc;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::net::TcpListener;
 use tracing::{error, info};
-use futures::stream::StreamExt;
+use futures::stream::{Stream, StreamExt};
 use chrono::Local;
+
+/// State for tracking token usage during streaming
+#[derive(Default)]
+struct StreamUsageState {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+/// Parse SSE data to extract token usage from Anthropic streaming events
+fn parse_sse_usage(data: &str, state: &std::sync::Arc<std::sync::Mutex<StreamUsageState>>) {
+    // Look for JSON data lines in SSE format
+    for line in data.lines() {
+        // SSE data lines may have "data: " prefix already stripped or not
+        let json_str = line.strip_prefix("data: ").unwrap_or(line);
+        if json_str.is_empty() || json_str == "[DONE]" {
+            continue;
+        }
+
+        // Try to parse as JSON
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
+            // Anthropic message_start contains input_tokens
+            if value.get("type").and_then(|t| t.as_str()) == Some("message_start") {
+                if let Some(input_tokens) = value
+                    .get("message")
+                    .and_then(|m| m.get("usage"))
+                    .and_then(|u| u.get("input_tokens"))
+                    .and_then(|t| t.as_u64())
+                {
+                    if let Ok(mut s) = state.lock() {
+                        s.input_tokens = input_tokens as u32;
+                    }
+                }
+            }
+            // Anthropic message_delta contains output_tokens
+            else if value.get("type").and_then(|t| t.as_str()) == Some("message_delta") {
+                if let Some(output_tokens) = value
+                    .get("usage")
+                    .and_then(|u| u.get("output_tokens"))
+                    .and_then(|t| t.as_u64())
+                {
+                    if let Ok(mut s) = state.lock() {
+                        s.output_tokens = output_tokens as u32;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A stream wrapper that logs metrics when the stream completes
+struct StreamWithMetrics<S> {
+    inner: S,
+    usage_state: std::sync::Arc<std::sync::Mutex<StreamUsageState>>,
+    start_time: std::time::Instant,
+    model: String,
+    provider: String,
+    route_type: RouteType,
+    logged: bool,
+}
+
+impl<S> StreamWithMetrics<S> {
+    fn new(
+        inner: S,
+        usage_state: std::sync::Arc<std::sync::Mutex<StreamUsageState>>,
+        start_time: std::time::Instant,
+        model: String,
+        provider: String,
+        route_type: RouteType,
+    ) -> Self {
+        Self {
+            inner,
+            usage_state,
+            start_time,
+            model,
+            provider,
+            route_type,
+            logged: false,
+        }
+    }
+
+    fn log_metrics(&mut self) {
+        if self.logged {
+            return;
+        }
+        self.logged = true;
+
+        let usage = self.usage_state.lock().ok();
+        let (_input_tokens, output_tokens) = usage
+            .map(|u| (u.input_tokens, u.output_tokens))
+            .unwrap_or((0, 0));
+
+        let latency_ms = self.start_time.elapsed().as_millis() as u64;
+        let tok_s = if latency_ms > 0 {
+            (output_tokens as f32 * 1000.0) / latency_ms as f32
+        } else {
+            0.0
+        };
+
+        info!(
+            "📊 {}@{} [{}] {}ms {:.0}t/s {}tok (stream)",
+            self.model, self.provider, self.route_type, latency_ms, tok_s, output_tokens
+        );
+    }
+}
+
+impl<S, T, E> Stream for StreamWithMetrics<S>
+where
+    S: Stream<Item = Result<T, E>> + Unpin,
+{
+    type Item = Result<T, E>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(None) => {
+                self.log_metrics();
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+impl<S> Drop for StreamWithMetrics<S> {
+    fn drop(&mut self) {
+        // Ensure metrics are logged even if stream is dropped early
+        self.log_metrics();
+    }
+}
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -599,7 +729,7 @@ async fn handle_openai_chat_completions(
                         // Calculate and log metrics
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                        info!("📊 {}@{} {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, latency_ms, tok_s, anthropic_response.usage.output_tokens);
+                        info!("📊 {}@{} [{}] {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, decision.route_type, latency_ms, tok_s, anthropic_response.usage.output_tokens);
 
                         // Write routing info for statusline
                         write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
@@ -768,12 +898,23 @@ async fn handle_messages(
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
 
-                            // Convert byte stream to SSE response
-                            // The provider returns raw bytes (SSE format), we pass them through
-                            let sse_stream = stream.map(|result| {
+                            // Shared state for tracking token usage across the stream
+                            let usage_state = std::sync::Arc::new(std::sync::Mutex::new(StreamUsageState::default()));
+                            let usage_for_stream = usage_state.clone();
+                            let stream_start = start_time;
+                            let stream_model = mapping.actual_model.clone();
+                            let stream_provider = mapping.provider.clone();
+                            let stream_route_type = decision.route_type.clone();
+
+                            // Convert byte stream to SSE response, parsing usage as we go
+                            let sse_stream = stream.map(move |result| {
                                 result.map(|bytes| {
                                     // Convert bytes to string for SSE event
                                     let data = String::from_utf8_lossy(&bytes).to_string();
+
+                                    // Parse SSE data to extract token usage
+                                    parse_sse_usage(&data, &usage_for_stream);
+
                                     Event::default().data(data)
                                 }).map_err(|e| {
                                     error!("Stream error: {}", e);
@@ -781,7 +922,17 @@ async fn handle_messages(
                                 })
                             });
 
-                            return Ok(Sse::new(sse_stream).into_response());
+                            // Wrap the stream to log metrics when it completes
+                            let metrics_stream = StreamWithMetrics::new(
+                                sse_stream,
+                                usage_state,
+                                stream_start,
+                                stream_model,
+                                stream_provider,
+                                stream_route_type,
+                            );
+
+                            return Ok(Sse::new(metrics_stream).into_response());
                         }
                         Err(e) => {
                             info!("⚠️ Provider {} streaming failed: {}, trying next fallback", mapping.provider, e);
@@ -799,7 +950,7 @@ async fn handle_messages(
                             // Calculate and log metrics
                             let latency_ms = start_time.elapsed().as_millis() as u64;
                             let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                            info!("📊 {}@{} {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, latency_ms, tok_s, response.usage.output_tokens);
+                            info!("📊 {}@{} [{}] {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, decision.route_type, latency_ms, tok_s, response.usage.output_tokens);
 
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
