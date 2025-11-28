@@ -613,11 +613,6 @@ async fn handle_openai_chat_completions(
                         return Ok(Json(openai_response).into_response());
                     }
                     Err(e) => {
-                        // Client errors (4xx) indicate invalid request - fail immediately
-                        if e.is_client_error() {
-                            error!("❌ Provider {} returned client error: {}", mapping.provider, e);
-                            return Err(AppError::ProviderError(e.to_string()));
-                        }
                         info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
                         continue;
                     }
@@ -789,11 +784,6 @@ async fn handle_messages(
                             return Ok(Sse::new(sse_stream).into_response());
                         }
                         Err(e) => {
-                            // Client errors (4xx) indicate invalid request - fail immediately
-                            if e.is_client_error() {
-                                error!("❌ Provider {} returned client error: {}", mapping.provider, e);
-                                return Err(AppError::ProviderError(e.to_string()));
-                            }
                             info!("⚠️ Provider {} streaming failed: {}, trying next fallback", mapping.provider, e);
                             continue;
                         }
@@ -817,11 +807,6 @@ async fn handle_messages(
                             return Ok(Json(response).into_response());
                         }
                         Err(e) => {
-                            // Client errors (4xx) indicate invalid request - fail immediately
-                            if e.is_client_error() {
-                                error!("❌ Provider {} returned client error: {}", mapping.provider, e);
-                                return Err(AppError::ProviderError(e.to_string()));
-                            }
                             info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
                             continue;
                         }
@@ -948,11 +933,6 @@ async fn handle_count_tokens(
                         return Ok(Json(response).into_response());
                     }
                     Err(e) => {
-                        // Client errors (4xx) indicate invalid request - fail immediately
-                        if e.is_client_error() {
-                            error!("❌ Provider {} returned client error: {}", mapping.provider, e);
-                            return Err(AppError::ProviderError(e.to_string()));
-                        }
                         info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
                         continue;
                     }
