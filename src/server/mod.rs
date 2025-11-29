@@ -19,7 +19,7 @@ use axum::{
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info};
-use futures::stream::{StreamExt, TryStreamExt};
+use futures::stream::TryStreamExt;
 use chrono::Local;
 
 /// Application state shared across handlers
