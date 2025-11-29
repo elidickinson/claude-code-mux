@@ -1358,9 +1358,7 @@ impl AnthropicProvider for OpenAIProvider {
         let message_id = format!("msg_{}", uuid::Uuid::new_v4());
         let is_first = Arc::new(Mutex::new(true));
         let has_content_block = Arc::new(Mutex::new(false));
-        let stream_ended_properly = Arc::new(Mutex::new(false)); // Track if finish_reason was received
-        let has_content_for_cleanup = has_content_block.clone(); // Clone before moving into closure
-        let stream_ended_for_cleanup = stream_ended_properly.clone();
+        let stream_ended_properly = Arc::new(Mutex::new(false));
         
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
@@ -1422,51 +1420,7 @@ impl AnthropicProvider for OpenAIProvider {
         })
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
-        // Add stream finalization to handle Cerebras bug where stream closes without finish_reason
-        let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
-            // Only send end events if stream didn't end properly AND we have an open content block
-            let has_content = *has_content_for_cleanup.lock().unwrap();
-            let ended_properly = *stream_ended_for_cleanup.lock().unwrap();
-            
-            if has_content && !ended_properly {
-                tracing::warn!("⚠️ Stream ended without finish_reason - sending end events (Cerebras bug workaround)");
-                
-                let mut output = String::new();
-                
-                // Close content block
-                let block_stop = serde_json::json!({
-                    "type": "content_block_stop",
-                    "index": 0
-                });
-                output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
-                
-                // Send message_delta with end_turn
-                let message_delta = serde_json::json!({
-                    "type": "message_delta",
-                    "delta": {
-                        "stop_reason": "end_turn",
-                        "stop_sequence": null
-                    },
-                    "usage": {
-                        "output_tokens": 0
-                    }
-                });
-                output.push_str(&format!("event: message_delta\ndata: {}\n\n", message_delta));
-                
-                // Send message_stop
-                let message_stop = serde_json::json!({
-                    "type": "message_stop"
-                });
-                output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
-                
-                Ok(Bytes::from(output))
-            } else {
-                Ok(Bytes::new())
-            }
-        }))
-        .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
-
-        Ok(Box::pin(finalized_stream))
+        Ok(Box::pin(transformed_stream))
     }
 
     fn supports_model(&self, model: &str) -> bool {
