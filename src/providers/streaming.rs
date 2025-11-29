@@ -69,6 +69,8 @@ pub struct SseStream<S> {
     #[pin]
     inner: S,
     buffer: String,
+    /// Queue of parsed events waiting to be emitted
+    event_queue: std::collections::VecDeque<SseEvent>,
 }
 
 impl<S> SseStream<S> {
@@ -76,6 +78,7 @@ impl<S> SseStream<S> {
         Self {
             inner: stream,
             buffer: String::new(),
+            event_queue: std::collections::VecDeque::new(),
         }
     }
 }
@@ -89,6 +92,12 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
 
+        // First, check if we have queued events to emit
+        if let Some(event) = this.event_queue.pop_front() {
+            return Poll::Ready(Some(Ok(event)));
+        }
+
+        // Poll the inner stream for new data
         match this.inner.poll_next(cx) {
             Poll::Ready(Some(Ok(bytes))) => {
                 // Add new bytes to buffer
@@ -96,12 +105,23 @@ where
                     this.buffer.push_str(text);
 
                     // Try to parse complete events from buffer
-                    let events = parse_sse_events(this.buffer);
+                    // Note: We only clear buffer up to the last complete event
+                    if let Some(last_event_end) = this.buffer.rfind("\n\n") {
+                        let complete_portion = &this.buffer[..last_event_end + 2];
+                        let events = parse_sse_events(complete_portion);
 
-                    if let Some(event) = events.first() {
-                        // Clear buffer after parsing
-                        *this.buffer = String::new();
-                        return Poll::Ready(Some(Ok(event.clone())));
+                        // Add all parsed events to queue
+                        for event in events {
+                            this.event_queue.push_back(event);
+                        }
+
+                        // Keep only the incomplete portion in buffer
+                        *this.buffer = this.buffer[last_event_end + 2..].to_string();
+
+                        // Return the first queued event if available
+                        if let Some(event) = this.event_queue.pop_front() {
+                            return Poll::Ready(Some(Ok(event)));
+                        }
                     }
                 }
 
@@ -116,10 +136,17 @@ where
                     let events = parse_sse_events(this.buffer);
                     *this.buffer = String::new();
 
-                    if let Some(event) = events.first() {
-                        return Poll::Ready(Some(Ok(event.clone())));
+                    // Add all parsed events to queue
+                    for event in events {
+                        this.event_queue.push_back(event);
                     }
                 }
+
+                // Return next queued event, or None if queue is empty
+                if let Some(event) = this.event_queue.pop_front() {
+                    return Poll::Ready(Some(Ok(event)));
+                }
+
                 Poll::Ready(None)
             }
             Poll::Pending => Poll::Pending,
