@@ -1504,9 +1504,6 @@ impl AnthropicProvider for OpenAIProvider {
         // The state tracks: message_started, text_block_open, tool_blocks, stream_ended
         let state = Arc::new(Mutex::new(StreamTransformState::default()));
 
-        // Clone ref for the stream finalization closure (Cerebras workaround)
-        let state_for_cleanup = state.clone();
-
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
 
@@ -1565,82 +1562,7 @@ impl AnthropicProvider for OpenAIProvider {
         })
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
-        // Cerebras Stream Finalization Workaround
-        // ========================================
-        // Some OpenAI-compatible providers (notably Cerebras) have a bug where they
-        // close the SSE stream without sending a chunk with `finish_reason`. This
-        // leaves the Anthropic client hanging because it never receives:
-        //   - content_block_stop (to close the text block)
-        //   - message_delta (with stop_reason)
-        //   - message_stop (to signal completion)
-        //
-        // This workaround chains a final "cleanup" stream that checks if the stream
-        // ended without proper termination and emits the missing events.
-        let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
-            let state = state_for_cleanup.lock().unwrap();
-            let has_open_blocks = state.text_block_open || !state.tool_blocks.is_empty();
-            let ended_properly = state.stream_ended;
-
-            if has_open_blocks && !ended_properly {
-                let num_tool_blocks = state.tool_blocks.len();
-                tracing::warn!("⚠️ Stream ended without finish_reason - sending end events (text_open={}, tools={})", state.text_block_open, num_tool_blocks);
-
-                let mut output = String::new();
-
-                // Close text block if open
-                if state.text_block_open {
-                    let block_stop = serde_json::json!({
-                        "type": "content_block_stop",
-                        "index": 0
-                    });
-                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
-                }
-
-                // Close any open tool blocks
-                for (_, block_index) in &state.tool_blocks {
-                    let block_stop = serde_json::json!({
-                        "type": "content_block_stop",
-                        "index": block_index
-                    });
-                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
-                }
-
-                // Determine stop_reason: tool_use if we have tool blocks, otherwise end_turn
-                let stop_reason = if !state.tool_blocks.is_empty() {
-                    "tool_use"
-                } else {
-                    "end_turn"
-                };
-
-                // Send message_delta
-                let message_delta = serde_json::json!({
-                    "type": "message_delta",
-                    "delta": {
-                        "stop_reason": stop_reason,
-                        "stop_sequence": null
-                    },
-                    "usage": {
-                        "output_tokens": 0
-                    }
-                });
-                output.push_str(&format!("event: message_delta\ndata: {}\n\n", message_delta));
-
-                // Send message_stop
-                let message_stop = serde_json::json!({
-                    "type": "message_stop"
-                });
-                output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
-
-                tracing::debug!("📤 Cerebras workaround emitted {} bytes (stop_reason: {}):\n{}", output.len(), stop_reason, output);
-
-                Ok(Bytes::from(output))
-            } else {
-                Ok(Bytes::new())
-            }
-        }))
-        .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
-
-        Ok(Box::pin(finalized_stream))
+        Ok(Box::pin(transformed_stream))
     }
 
     fn supports_model(&self, model: &str) -> bool {
