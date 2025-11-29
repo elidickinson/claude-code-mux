@@ -24,14 +24,13 @@ if [ -f "$CCM_FILE" ]; then
     TIMESTAMP=$(jq -r '.timestamp // ""' "$CCM_FILE")
 
     # Read recent models (array, already deduplicated by CCM)
-    RECENT_MODELS=$(jq -r '.recent // [] | join(" ")' "$CCM_FILE")
+    # Get current model (first array element) safely
+    CURRENT_MODEL=$(jq -r '.recent[0] // ""' "$CCM_FILE")
 
-    if [ -n "$RECENT_MODELS" ]; then
-        # Extract first model as current (already in current format)
-        CURRENT_MODEL="${RECENT_MODELS%% *}"
-        # Get the rest (excluding current)
-        OTHER_MODELS="${RECENT_MODELS#* }"
+    # Get other models (elements 1+) as space-separated string, if any
+    OTHER_MODELS=$(jq -r '.recent[1:] | join(" ") // ""' "$CCM_FILE")
 
+    if [ -n "$CURRENT_MODEL" ]; then
         if [ -n "$OTHER_MODELS" ]; then
             # Format: current (recent1 recent2) HH:MM:SS
             echo "$CURRENT_MODEL ($OTHER_MODELS) $TIMESTAMP"
