@@ -1582,13 +1582,13 @@ impl AnthropicProvider for OpenAIProvider {
             let ended_properly = state.stream_ended;
 
             if has_open_blocks && !ended_properly {
-                tracing::warn!("⚠️ Stream ended without finish_reason - sending end events (Cerebras bug workaround)");
+                let num_tool_blocks = state.tool_blocks.len();
+                tracing::warn!("⚠️ Stream ended without finish_reason - sending end events (text_open={}, tools={})", state.text_block_open, num_tool_blocks);
 
                 let mut output = String::new();
 
                 // Close text block if open
                 if state.text_block_open {
-                    tracing::debug!("🔧 Closing text block at index 0");
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": 0
@@ -1598,7 +1598,6 @@ impl AnthropicProvider for OpenAIProvider {
 
                 // Close any open tool blocks
                 for (_, block_index) in &state.tool_blocks {
-                    tracing::debug!("🔧 Closing tool block at index {}", block_index);
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": block_index
@@ -1612,8 +1611,6 @@ impl AnthropicProvider for OpenAIProvider {
                 } else {
                     "end_turn"
                 };
-
-                tracing::debug!("🔧 Sending message_delta with stop_reason: {}", stop_reason);
 
                 // Send message_delta
                 let message_delta = serde_json::json!({
@@ -1634,7 +1631,7 @@ impl AnthropicProvider for OpenAIProvider {
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
 
-                tracing::debug!("📤 Cerebras workaround sending {} bytes:\n{}", output.len(), output);
+                tracing::debug!("📤 Cerebras workaround emitted {} bytes (stop_reason: {}):\n{}", output.len(), stop_reason, output);
 
                 Ok(Bytes::from(output))
             } else {
