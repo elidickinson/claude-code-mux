@@ -1588,6 +1588,7 @@ impl AnthropicProvider for OpenAIProvider {
 
                 // Close text block if open
                 if state.text_block_open {
+                    tracing::debug!("🔧 Closing text block at index 0");
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": 0
@@ -1597,6 +1598,7 @@ impl AnthropicProvider for OpenAIProvider {
 
                 // Close any open tool blocks
                 for (_, block_index) in &state.tool_blocks {
+                    tracing::debug!("🔧 Closing tool block at index {}", block_index);
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
                         "index": block_index
@@ -1604,11 +1606,20 @@ impl AnthropicProvider for OpenAIProvider {
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
                 }
 
-                // Send message_delta with end_turn
+                // Determine stop_reason: tool_use if we have tool blocks, otherwise end_turn
+                let stop_reason = if !state.tool_blocks.is_empty() {
+                    "tool_use"
+                } else {
+                    "end_turn"
+                };
+
+                tracing::debug!("🔧 Sending message_delta with stop_reason: {}", stop_reason);
+
+                // Send message_delta
                 let message_delta = serde_json::json!({
                     "type": "message_delta",
                     "delta": {
-                        "stop_reason": "end_turn",
+                        "stop_reason": stop_reason,
                         "stop_sequence": null
                     },
                     "usage": {
@@ -1622,6 +1633,8 @@ impl AnthropicProvider for OpenAIProvider {
                     "type": "message_stop"
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
+
+                tracing::debug!("📤 Cerebras workaround sending {} bytes:\n{}", output.len(), output);
 
                 Ok(Bytes::from(output))
             } else {
