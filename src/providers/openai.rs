@@ -1518,7 +1518,7 @@ impl AnthropicProvider for OpenAIProvider {
             async move {
                 match result {
                     Ok(sse_event) => {
-                        tracing::debug!("📦 Received SSE chunk: {}", sse_event.data.chars().take(100).collect::<String>());
+                        tracing::debug!("📦 Received SSE chunk: {}", sse_event.data);
 
                         // Skip empty data
                         if sse_event.data.trim().is_empty() {
@@ -1543,7 +1543,9 @@ impl AnthropicProvider for OpenAIProvider {
                                     &mut *state.lock().unwrap()
                                 );
 
-                                tracing::debug!("📤 Sending {} bytes", sse_output.len());
+                                if !sse_output.is_empty() {
+                                    tracing::debug!("📤 Sending {} bytes:\n{}", sse_output.len(), sse_output);
+                                }
 
                                 // Return as raw bytes (already SSE-formatted)
                                 Ok(Bytes::from(sse_output))
