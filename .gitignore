@@ -28,3 +28,4 @@ logs/
 .serena
 response.txt
 .claude/settings.local.json
+log.txt
