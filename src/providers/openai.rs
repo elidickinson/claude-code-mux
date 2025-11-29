@@ -1503,6 +1503,7 @@ impl AnthropicProvider for OpenAIProvider {
         // Using Arc<Mutex<StreamTransformState>> to track state across async chunks.
         // The state tracks: message_started, text_block_open, tool_blocks, stream_ended
         let state = Arc::new(Mutex::new(StreamTransformState::default()));
+        let state_for_cleanup = state.clone();
 
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
@@ -1562,7 +1563,62 @@ impl AnthropicProvider for OpenAIProvider {
         })
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
-        Ok(Box::pin(transformed_stream))
+        // Add stream finalization to ensure proper termination
+        // Some providers close streams without sending finish_reason
+        let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
+            let state = state_for_cleanup.lock().unwrap();
+
+            // Only send end events if stream didn't end properly
+            if state.message_started && !state.stream_ended {
+                tracing::warn!("⚠️ Stream ended without finish_reason - sending end events");
+
+                let mut output = String::new();
+
+                // Close text block if open
+                if state.text_block_open {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": 0
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
+
+                // Close all tool blocks
+                for (_, block_index) in &state.tool_blocks {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": block_index
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
+
+                // Send message_delta with end_turn (we don't know the real stop_reason)
+                let message_delta = serde_json::json!({
+                    "type": "message_delta",
+                    "delta": {
+                        "stop_reason": "end_turn",
+                        "stop_sequence": null
+                    },
+                    "usage": {
+                        "output_tokens": 0
+                    }
+                });
+                output.push_str(&format!("event: message_delta\ndata: {}\n\n", message_delta));
+
+                // Send message_stop
+                let message_stop = serde_json::json!({
+                    "type": "message_stop"
+                });
+                output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
+
+                Ok(Bytes::from(output))
+            } else {
+                Ok(Bytes::new())
+            }
+        }))
+        .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
+
+        Ok(Box::pin(finalized_stream))
     }
 
     fn supports_model(&self, model: &str) -> bool {
