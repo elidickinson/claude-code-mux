@@ -7,6 +7,7 @@ use crate::router::Router;
 use crate::providers::ProviderRegistry;
 use crate::auth::TokenStore;
 use axum::{
+    body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{
@@ -18,7 +19,7 @@ use axum::{
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info};
-use futures::stream::StreamExt;
+use futures::stream::{StreamExt, TryStreamExt};
 use chrono::Local;
 
 /// Application state shared across handlers
@@ -772,20 +773,24 @@ async fn handle_messages(
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
 
-                            // Convert byte stream to SSE response
-                            // The provider returns raw bytes (SSE format), we pass them through
-                            let sse_stream = stream.map(|result| {
-                                result.map(|bytes| {
-                                    // Convert bytes to string for SSE event
-                                    let data = String::from_utf8_lossy(&bytes).to_string();
-                                    Event::default().data(data)
-                                }).map_err(|e| {
-                                    error!("Stream error: {}", e);
-                                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                                })
+                            // Convert provider stream to HTTP response
+                            // The provider already returns properly formatted SSE bytes (event: + data: lines)
+                            // We pass them through as-is without wrapping
+                            let body_stream = stream.map_err(|e| {
+                                error!("Stream error: {}", e);
+                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
                             });
 
-                            return Ok(Sse::new(sse_stream).into_response());
+                            let body = Body::from_stream(body_stream);
+                            let response = Response::builder()
+                                .status(200)
+                                .header("Content-Type", "text/event-stream")
+                                .header("Cache-Control", "no-cache")
+                                .header("Connection", "keep-alive")
+                                .body(body)
+                                .unwrap();
+
+                            return Ok(response);
                         }
                         Err(e) => {
                             info!("⚠️ Provider {} streaming failed: {}, trying next fallback", mapping.provider, e);
