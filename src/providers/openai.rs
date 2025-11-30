@@ -1015,10 +1015,9 @@ impl OpenAIProvider {
                 .or(choice.delta.reasoning.as_ref()); // Support reasoning field for GLM/Cerebras
 
             if let Some(text) = text_content {
-                // Skip empty text
-                if text.is_empty() {
-                    continue;
-                }
+                // Don't use continue for empty text - finish_reason processing
+                // is required even when content is empty to ensure proper stream termination.
+                if !text.is_empty() {
 
                 // Emit content_block_start if this is the first text content
                 if !state.text_block_open {
@@ -1045,6 +1044,7 @@ impl OpenAIProvider {
                     }
                 });
                 output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
+                }
             }
 
             // Tool Calls Transformation (OpenAI function calling → Anthropic tool_use)
@@ -1542,7 +1542,7 @@ impl AnthropicProvider for OpenAIProvider {
                                 );
 
                                 if !sse_output.is_empty() {
-                                    tracing::debug!("📤 Sending {} bytes:\n{}", sse_output.len(), sse_output);
+                                    tracing::debug!("SSE: {} bytes", sse_output.len());
                                 }
 
                                 // Return as raw bytes (already SSE-formatted)
