@@ -1197,6 +1197,11 @@ impl OpenAIProvider {
             }
         }
 
+        // If no events were emitted but we processed a chunk, send a ping
+        if output.is_empty() {
+            output.push_str(": ping\n\n");
+        }
+
         output
     }
 }
@@ -1516,6 +1521,12 @@ impl AnthropicProvider for OpenAIProvider {
             async move {
                 match result {
                     Ok(sse_event) => {
+                        // If stream already ended, don't process any more chunks
+                        if state.lock().unwrap().stream_ended {
+                            tracing::debug!("⏹️ Stream already ended, skipping chunk");
+                            return Ok(Bytes::new());
+                        }
+
                         tracing::debug!("📦 Received SSE chunk: {}", sse_event.data);
 
                         // Skip empty data
