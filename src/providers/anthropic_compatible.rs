@@ -411,6 +411,6 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
     }
 
     fn supports_model(&self, model: &str) -> bool {
-        self.models.iter().any(|m| m == model)
+        self.models.iter().any(|m| m.eq_ignore_ascii_case(model))
     }
 }

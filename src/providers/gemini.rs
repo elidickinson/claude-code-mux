@@ -753,7 +753,7 @@ impl AnthropicProvider for GeminiProvider {
     }
 
     fn supports_model(&self, model: &str) -> bool {
-        self.models.contains(&model.to_string())
+        self.models.iter().any(|m| m.eq_ignore_ascii_case(model))
     }
 }
 

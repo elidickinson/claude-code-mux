@@ -552,7 +552,7 @@ async fn handle_openai_chat_completions(
     );
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name == decision.model_name) {
+    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
         info!("📋 Found {} provider mappings for model: {}", model_config.mappings.len(), decision.model_name);
 
         // Check for X-Provider header to override priority
@@ -701,7 +701,7 @@ async fn handle_messages(
     );
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name == decision.model_name) {
+    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
         info!("📋 Found {} provider mappings for model: {}", model_config.mappings.len(), decision.model_name);
 
         // Check for X-Provider header to override priority
@@ -910,7 +910,7 @@ async fn handle_count_tokens(
     );
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name == decision.model_name) {
+    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
         info!("📋 Found {} provider mappings for token counting: {}", model_config.mappings.len(), decision.model_name);
 
         // Sort mappings by priority

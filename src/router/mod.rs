@@ -221,10 +221,10 @@ impl Router {
                     // Remove the tag from the text
                     second_block.text = re.replace_all(&second_block.text, "").to_string();
 
-                    // First, try to find a model with this name in the models config
-                    if let Some(_model) = self.config.models.iter().find(|m| m.name == tag_value) {
-                        // Found a configured model with this name
-                        return Some(tag_value);
+                    // First, try to find a model with this name in the models config (case-insensitive)
+                    if let Some(_model) = self.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&tag_value)) {
+                        // Found a configured model with this name (use the configured case)
+                        return Some(_model.name.clone());
                     }
 
                     // DEPRECATED: Fall back to treating the tag value as a direct provider model name
