@@ -1,5 +1,5 @@
 use super::{AnthropicProvider, ProviderResponse, error::ProviderError};
-use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse};
+use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock};
 use crate::auth::{TokenStore, OAuthClient, OAuthConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -7,6 +7,56 @@ use std::pin::Pin;
 use futures::stream::Stream;
 use bytes::Bytes;
 use secrecy::ExposeSecret;
+
+/// Check if a signature looks like it came from Anthropic.
+/// Anthropic signatures are long base64 strings (200+ chars).
+/// Other providers (MiniMax, OpenAI, etc.) use short hex strings (64 chars) or empty.
+fn is_anthropic_signature(sig: &str) -> bool {
+    sig.len() > 100
+}
+
+/// Strip thinking blocks with incompatible signatures for the target provider.
+/// Different providers sign thinking blocks with their own keys.
+/// - When sending to Anthropic: keep only long base64 signatures (Anthropic's)
+/// - When sending to others: keep only short signatures (non-Anthropic)
+/// Also removes messages that become empty after stripping.
+fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthropic_target: bool) {
+    let mut stripped_count = 0;
+
+    for message in &mut request.messages {
+        if let MessageContent::Blocks(blocks) = &mut message.content {
+            let before_len = blocks.len();
+            blocks.retain(|block| {
+                match block {
+                    ContentBlock::Thinking { raw } => {
+                        let sig = raw.get("signature").and_then(|v| v.as_str()).unwrap_or("");
+                        if is_anthropic_target {
+                            is_anthropic_signature(sig)
+                        } else {
+                            !is_anthropic_signature(sig)
+                        }
+                    }
+                    _ => true,
+                }
+            });
+            stripped_count += before_len - blocks.len();
+        }
+    }
+
+    // Remove messages that became empty (except final assistant message which can be empty)
+    let len = request.messages.len();
+    request.messages.retain(|msg| {
+        match &msg.content {
+            MessageContent::Text(t) => !t.is_empty(),
+            MessageContent::Blocks(b) => !b.is_empty(),
+        }
+    });
+    let removed_msgs = len - request.messages.len();
+
+    if stripped_count > 0 || removed_msgs > 0 {
+        tracing::debug!("🧹 Stripped {} thinking blocks, removed {} empty messages", stripped_count, removed_msgs);
+    }
+}
 
 /// Generic Anthropic-compatible provider
 /// Works with: Anthropic, OpenRouter, z.ai, Minimax, etc.
@@ -203,6 +253,11 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
     async fn send_message(&self, request: AnthropicRequest) -> Result<ProviderResponse, ProviderError> {
         let url = format!("{}/v1/messages", self.base_url);
 
+        // Strip thinking blocks with incompatible signatures
+        let mut request = request;
+        let is_anthropic = self.base_url.contains("anthropic.com");
+        strip_incompatible_thinking_blocks(&mut request, is_anthropic);
+
         // Get authentication header value (API key or OAuth token)
         let auth_value = self.get_auth_header().await?;
 
@@ -331,8 +386,8 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
                                 crate::models::ContentBlock::ToolResult { content, .. } => {
                                     Some(content.to_string())
                                 }
-                                crate::models::ContentBlock::Thinking { thinking, .. } => {
-                                    Some(thinking.clone())
+                                crate::models::ContentBlock::Thinking { raw } => {
+                                    raw.get("thinking").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 }
                                 _ => None,
                             }
@@ -358,6 +413,11 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
         use futures::stream::TryStreamExt;
 
         let url = format!("{}/v1/messages", self.base_url);
+
+        // Strip thinking blocks with incompatible signatures
+        let mut request = request;
+        let is_anthropic = self.base_url.contains("anthropic.com");
+        strip_incompatible_thinking_blocks(&mut request, is_anthropic);
 
         // Get authentication header value
         let auth_value = self.get_auth_header().await?;

@@ -210,11 +210,13 @@ impl GeminiProvider {
                                     });
                                 }
                             }
-                            ContentBlock::Thinking { thinking, .. } => {
+                            ContentBlock::Thinking { raw } => {
                                 // Gemini doesn't have thinking blocks, convert to text
-                                parts.push(GeminiPart::Text {
-                                    text: thinking.clone(),
-                                });
+                                if let Some(thinking) = raw.get("thinking").and_then(|v| v.as_str()) {
+                                    parts.push(GeminiPart::Text {
+                                        text: thinking.to_string(),
+                                    });
+                                }
                             }
                             _ => {
                                 // Skip tool use/result for now
