@@ -1,13 +1,13 @@
 use axum::{
     extract::{Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse},
+    response::Html,
     Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::auth::{OAuthClient, OAuthConfig, TokenStore};
+use crate::auth::{OAuthClient, OAuthConfig};
 
 use super::AppState;
 

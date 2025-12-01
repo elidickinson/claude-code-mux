@@ -3,7 +3,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use super::token_store::{OAuthToken, TokenStore};
 
@@ -439,16 +439,18 @@ impl OAuthClient {
     pub async fn load_code_assist(&self, access_token: &str) -> Result<String> {
         #[derive(Serialize)]
         struct LoadCodeAssistRequest {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            cloudaicompanionProject: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none", rename = "cloudaicompanionProject")]
+            cloudaicompanion_project: Option<String>,
             metadata: ClientMetadata,
         }
 
         #[derive(Serialize)]
         struct ClientMetadata {
-            ideType: String,
+            #[serde(rename = "ideType")]
+            ide_type: String,
             platform: String,
-            pluginType: String,
+            #[serde(rename = "pluginType")]
+            plugin_type: String,
         }
 
         #[derive(Deserialize)]
@@ -469,11 +471,11 @@ impl OAuthClient {
         }
 
         let request = LoadCodeAssistRequest {
-            cloudaicompanionProject: project_id.clone(),
+            cloudaicompanion_project: project_id.clone(),
             metadata: ClientMetadata {
-                ideType: "IDE_UNSPECIFIED".to_string(),
+                ide_type: "IDE_UNSPECIFIED".to_string(),
                 platform: "PLATFORM_UNSPECIFIED".to_string(),
-                pluginType: "GEMINI".to_string(),
+                plugin_type: "GEMINI".to_string(),
             },
         };
 

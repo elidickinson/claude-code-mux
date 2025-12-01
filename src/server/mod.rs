@@ -11,7 +11,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{
-        Html, IntoResponse, Response, sse::{Event, Sse},
+        Html, IntoResponse, Response,
     },
     routing::{get, post},
     Form, Json, Router as AxumRouter,

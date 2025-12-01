@@ -74,6 +74,7 @@ nix = { version = "0.29", features = ["signal"] }  # Unix signals
 tokio-test = "0.4"
 mockito = "1"
 criterion = "0.5"          # Benchmarking
+tempfile = "3"             # Temporary directory testing
 
 # Property Testing
 proptest = "1"
