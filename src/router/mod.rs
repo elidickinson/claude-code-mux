@@ -1,8 +1,15 @@
 use crate::cli::AppConfig;
-use crate::models::{AnthropicRequest, RouteDecision, RouteType, SystemPrompt};
+use crate::models::{AnthropicRequest, ContentBlock, MessageContent, RouteDecision, RouteType, SystemPrompt};
 use anyhow::Result;
 use regex::Regex;
 use tracing::{debug, info};
+
+/// Compiled prompt rule with pre-compiled regex
+#[derive(Clone)]
+pub struct CompiledPromptRule {
+    pub regex: Regex,
+    pub model: String,
+}
 
 /// Router for intelligently selecting models based on request characteristics
 #[derive(Clone)]
@@ -10,6 +17,7 @@ pub struct Router {
     config: AppConfig,
     auto_map_regex: Option<Regex>,
     background_regex: Option<Regex>,
+    prompt_rules: Vec<CompiledPromptRule>,
 }
 
 impl Router {
@@ -78,15 +86,42 @@ impl Router {
                 Some(Regex::new(r"(?i)claude.*haiku").expect("Invalid default background regex"))
             });
 
+        // Compile prompt rules
+        let prompt_rules: Vec<CompiledPromptRule> = config
+            .router
+            .prompt_rules
+            .iter()
+            .filter_map(|rule| {
+                match Regex::new(&rule.pattern) {
+                    Ok(regex) => Some(CompiledPromptRule {
+                        regex,
+                        model: rule.model.clone(),
+                    }),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Invalid prompt_rule pattern '{}': {}. Skipping.",
+                            rule.pattern, e
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        if !prompt_rules.is_empty() {
+            info!("📝 Loaded {} prompt routing rules", prompt_rules.len());
+        }
+
         Self {
             config,
             auto_map_regex,
             background_regex,
+            prompt_rules,
         }
     }
 
     /// Route an incoming request to the appropriate model
-    /// Priority: websearch > subagent > think > background > auto-map > default
+    /// Priority: websearch > subagent > prompt_rules > think > background > auto-map > default
     pub fn route(&self, request: &mut AnthropicRequest) -> Result<RouteDecision> {
         // Save original model for background task detection
         let original_model = request.model.clone();
@@ -112,7 +147,7 @@ impl Router {
             }
         }
 
-        // 2. Subagent Model (system prompt tag)
+        // 2. Subagent Model (system prompt tag - explicit override)
         if let Some(model) = self.extract_subagent_model(request) {
             info!(
                 "🤖 Routing to subagent model (CCM-SUBAGENT-MODEL tag): {}",
@@ -120,11 +155,20 @@ impl Router {
             );
             return Ok(RouteDecision {
                 model_name: model,
-                route_type: RouteType::Default, // Using Default route type
+                route_type: RouteType::Default,
             });
         }
 
-        // 3. Think mode (Plan Mode / Reasoning)
+        // 3. Prompt Rules (pattern matching on user prompt)
+        if let Some(model) = self.match_prompt_rule(request) {
+            info!("📝 Routing to model via prompt rule match: {}", model);
+            return Ok(RouteDecision {
+                model_name: model,
+                route_type: RouteType::PromptRule,
+            });
+        }
+
+        // 4. Think mode (Plan Mode / Reasoning)
         if let Some(ref think_model) = self.config.router.think {
             if self.is_plan_mode(request) {
                 info!("🧠 Routing to think model (Plan Mode detected)");
@@ -135,7 +179,7 @@ impl Router {
             }
         }
 
-        // 4. Background tasks (check against ORIGINAL model name, before auto-mapping)
+        // 5. Background tasks (check against ORIGINAL model name, before auto-mapping)
         if let Some(ref background_model) = self.config.router.background {
             if self.is_background_task(&original_model) {
                 debug!("🔄 Routing to background model");
@@ -146,7 +190,7 @@ impl Router {
             }
         }
 
-        // 5. Default fallback
+        // 6. Default fallback
         // Use the transformed model name (from auto-mapping) or original if no mapping
         debug!("✅ Using model: {}", request.model);
         Ok(RouteDecision {
@@ -186,6 +230,62 @@ impl Router {
             regex.is_match(model)
         } else {
             false
+        }
+    }
+
+    /// Match prompt rules against the last user message content
+    /// Returns the model name if a rule matches, None otherwise
+    fn match_prompt_rule(&self, request: &AnthropicRequest) -> Option<String> {
+        if self.prompt_rules.is_empty() {
+            return None;
+        }
+
+        // Extract last user message content
+        let user_content = self.extract_last_user_message(request)?;
+
+        // Check each rule in order (first match wins)
+        for rule in &self.prompt_rules {
+            if rule.regex.is_match(&user_content) {
+                debug!(
+                    "📝 Prompt rule matched: pattern='{}' → model='{}'",
+                    rule.regex.as_str(),
+                    rule.model
+                );
+                return Some(rule.model.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Extract the text content from the last user message
+    fn extract_last_user_message(&self, request: &AnthropicRequest) -> Option<String> {
+        // Find the last user message
+        let last_user = request
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")?;
+
+        // Extract text content
+        match &last_user.content {
+            MessageContent::Text(text) => Some(text.clone()),
+            MessageContent::Blocks(blocks) => {
+                // Concatenate all text blocks
+                let text: String = blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
         }
     }
 
@@ -256,6 +356,7 @@ mod tests {
                 websearch: Some("websearch.model".to_string()),
                 auto_map_regex: None,   // Use default Claude pattern
                 background_regex: None, // Use default claude-haiku pattern
+                prompt_rules: vec![],   // No prompt rules by default
             },
             providers: vec![],
             models: vec![],
