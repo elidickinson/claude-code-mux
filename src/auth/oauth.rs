@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
+use secrecy::{SecretString, ExposeSecret};
 
 use super::token_store::{OAuthToken, TokenStore};
 
@@ -318,8 +319,8 @@ impl OAuthClient {
 
         let token = OAuthToken {
             provider_id: provider_id.to_string(),
-            access_token: token_response.access_token,
-            refresh_token: token_response.refresh_token.expect("Initial OAuth exchange must return refresh_token"),
+            access_token: SecretString::new(token_response.access_token),
+            refresh_token: SecretString::new(token_response.refresh_token.expect("Initial OAuth exchange must return refresh_token")),
             expires_at,
             enterprise_url: None,
             project_id: None,  // Will be set by loadCodeAssist for Gemini
@@ -351,7 +352,7 @@ impl OAuthClient {
             // Google uses form-urlencoded WITH client_secret
             let form_params = [
                 ("grant_type", "refresh_token"),
-                ("refresh_token", &existing_token.refresh_token),
+                ("refresh_token", existing_token.refresh_token.expose_secret()),
                 ("client_id", &self.config.client_id),
                 ("client_secret", self.config.client_secret.as_ref().unwrap()),
             ];
@@ -367,7 +368,7 @@ impl OAuthClient {
             // OpenAI uses form-urlencoded WITHOUT client_secret
             let form_params = [
                 ("grant_type", "refresh_token"),
-                ("refresh_token", &existing_token.refresh_token),
+                ("refresh_token", existing_token.refresh_token.expose_secret()),
                 ("client_id", &self.config.client_id),
             ];
 
@@ -389,7 +390,7 @@ impl OAuthClient {
 
             let request = RefreshRequest {
                 grant_type: "refresh_token".to_string(),
-                refresh_token: existing_token.refresh_token.clone(),
+                refresh_token: existing_token.refresh_token.expose_secret().to_string(),
                 client_id: self.config.client_id.clone(),
             };
 
@@ -420,9 +421,11 @@ impl OAuthClient {
 
         let token = OAuthToken {
             provider_id: provider_id.to_string(),
-            access_token: token_response.access_token,
+            access_token: SecretString::new(token_response.access_token),
             // Use new refresh_token if provided, otherwise keep existing one (Google doesn't return new one)
-            refresh_token: token_response.refresh_token.unwrap_or(existing_token.refresh_token),
+            refresh_token: token_response.refresh_token
+                .map(SecretString::new)
+                .unwrap_or(existing_token.refresh_token),
             expires_at,
             enterprise_url: existing_token.enterprise_url,
             project_id: existing_token.project_id,  // Preserve project_id from existing token
@@ -525,9 +528,9 @@ impl OAuthClient {
 
         if token.needs_refresh() {
             let refreshed = self.refresh_token(provider_id).await?;
-            Ok(refreshed.access_token)
+            Ok(refreshed.access_token.expose_secret().to_string())
         } else {
-            Ok(token.access_token)
+            Ok(token.access_token.expose_secret().to_string())
         }
     }
 

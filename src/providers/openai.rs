@@ -8,6 +8,7 @@ use std::pin::Pin;
 use futures::stream::Stream;
 use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose};
+use secrecy::ExposeSecret;
 
 /// Official Codex instructions from OpenAI
 /// Source: https://github.com/openai/codex (rust-v0.58.0)
@@ -570,7 +571,7 @@ impl OpenAIProvider {
                         match oauth_client.refresh_token(oauth_provider_id).await {
                             Ok(new_token) => {
                                 tracing::info!("✅ Token refreshed successfully");
-                                return Ok(new_token.access_token);
+                                return Ok(new_token.access_token.expose_secret().to_string());
                             }
                             Err(e) => {
                                 tracing::error!("❌ Failed to refresh token: {}", e);
@@ -581,7 +582,7 @@ impl OpenAIProvider {
                         }
                     } else {
                         // Token is still valid
-                        return Ok(token.access_token);
+                        return Ok(token.access_token.expose_secret().to_string());
                     }
                 } else {
                     return Err(ProviderError::AuthError(format!(
@@ -1194,6 +1195,7 @@ impl OpenAIProvider {
                     "type": "message_stop"
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
+                tracing::debug!("✅ Sent message_stop event, stream_ended=true");
             }
         }
 
@@ -1554,6 +1556,8 @@ impl AnthropicProvider for OpenAIProvider {
 
                                 if !sse_output.is_empty() {
                                     tracing::debug!("SSE: {} bytes", sse_output.len());
+                                } else {
+                                    tracing::debug!("SSE: empty output (will be filtered)");
                                 }
 
                                 // Return as raw bytes (already SSE-formatted)

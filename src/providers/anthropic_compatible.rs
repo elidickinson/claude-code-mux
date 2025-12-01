@@ -6,6 +6,7 @@ use reqwest::Client;
 use std::pin::Pin;
 use futures::stream::Stream;
 use bytes::Bytes;
+use secrecy::ExposeSecret;
 
 /// Generic Anthropic-compatible provider
 /// Works with: Anthropic, OpenRouter, z.ai, Minimax, etc.
@@ -85,7 +86,7 @@ impl AnthropicCompatibleProvider {
                         match oauth_client.refresh_token(oauth_provider_id).await {
                             Ok(new_token) => {
                                 tracing::info!("✅ Token refreshed successfully");
-                                return Ok(new_token.access_token);
+                                return Ok(new_token.access_token.expose_secret().to_string());
                             }
                             Err(e) => {
                                 tracing::error!("❌ Failed to refresh token: {}", e);
@@ -96,7 +97,7 @@ impl AnthropicCompatibleProvider {
                         }
                     } else {
                         // Token is still valid
-                        return Ok(token.access_token);
+                        return Ok(token.access_token.expose_secret().to_string());
                     }
                 } else {
                     return Err(ProviderError::AuthError(format!(

@@ -6,6 +6,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use secrecy::ExposeSecret;
 
 use crate::auth::{OAuthClient, OAuthConfig};
 
@@ -155,7 +156,7 @@ pub async fn oauth_exchange(
     if is_gemini {
         tracing::info!("🔍 Gemini provider detected, calling loadCodeAssist to get project ID");
 
-        match oauth_client.load_code_assist(&token.access_token).await {
+        match oauth_client.load_code_assist(&token.access_token.expose_secret()).await {
             Ok(project_id) => {
                 tracing::info!("✅ Got project ID from loadCodeAssist: {}", project_id);
                 token.project_id = Some(project_id);

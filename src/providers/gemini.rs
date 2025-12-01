@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use secrecy::ExposeSecret;
 
 /// Google Gemini provider supporting three authentication methods:
 /// 1. OAuth 2.0 (Google AI Pro/Ultra) - Uses Code Assist API
@@ -129,7 +130,7 @@ impl GeminiProvider {
                     match oauth_client.refresh_token(oauth_provider_id).await {
                         Ok(new_token) => {
                             tracing::info!("✅ Token refreshed successfully");
-                            return Ok(Some(format!("Bearer {}", new_token.access_token)));
+                            return Ok(Some(format!("Bearer {}", new_token.access_token.expose_secret())));
                         }
                         Err(e) => {
                             tracing::error!("❌ Failed to refresh token: {}", e);
@@ -140,7 +141,7 @@ impl GeminiProvider {
                     }
                 } else {
                     // Token is still valid
-                    return Ok(Some(format!("Bearer {}", token.access_token)));
+                    return Ok(Some(format!("Bearer {}", token.access_token.expose_secret())));
                 }
             } else {
                 return Err(ProviderError::AuthError(format!(
