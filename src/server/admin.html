@@ -1605,6 +1605,17 @@
                             </select>
                         </div>
                     </form>
+
+                    <!-- Prompt Rules (read-only) -->
+                    <div class="card mt-6">
+                        <h2 class="text-xl font-bold mb-4">Prompt Rules</h2>
+                        <p class="text-gray-600 mb-4">
+                            Pattern-based routing rules (edit in config file)
+                        </p>
+                        <div id="prompt-rules-list">
+                            <p class="text-gray-500 italic">No prompt rules configured</p>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Settings Tab -->
@@ -2227,6 +2238,33 @@
                     backgroundSelect.value = config.router.background || "";
                 if (websearchSelect)
                     websearchSelect.value = config.router.websearch || "";
+
+                // Display prompt rules (read-only)
+                const promptRulesList = document.getElementById("prompt-rules-list");
+                const promptRules = config.router.prompt_rules || [];
+
+                if (promptRules.length === 0) {
+                    promptRulesList.innerHTML = '<p class="text-gray-500 italic">No prompt rules configured</p>';
+                } else {
+                    promptRulesList.innerHTML = `
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-gray-600 border-b">
+                                    <th class="pb-2 font-semibold">Pattern</th>
+                                    <th class="pb-2 font-semibold">Model</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${promptRules.map(rule => `
+                                    <tr class="border-b border-gray-100">
+                                        <td class="py-2 font-mono text-xs">${escapeHtml(rule.pattern)}</td>
+                                        <td class="py-2">${escapeHtml(rule.model)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
             }
 
             function loadSettingsTab() {
