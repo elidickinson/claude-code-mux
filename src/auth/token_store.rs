@@ -1,20 +1,40 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use secrecy::{SecretString, ExposeSecret};
+
+/// Serialize SecretString for storage
+fn serialize_secret<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(secret.expose_secret())
+}
+
+/// Deserialize SecretString from storage
+fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(SecretString::new(s))
+}
 
 /// OAuth token information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthToken {
     /// Provider ID (e.g., "claude-max", "anthropic-oauth")
     pub provider_id: String,
-    /// OAuth access token
-    pub access_token: String,
-    /// OAuth refresh token
-    pub refresh_token: String,
+    /// OAuth access token (stored securely)
+    #[serde(serialize_with = "serialize_secret", deserialize_with = "deserialize_secret")]
+    pub access_token: SecretString,
+    /// OAuth refresh token (stored securely)
+    #[serde(serialize_with = "serialize_secret", deserialize_with = "deserialize_secret")]
+    pub refresh_token: SecretString,
     /// Token expiration time (UTC)
     pub expires_at: DateTime<Utc>,
     /// Optional enterprise URL for GitHub Copilot Enterprise
@@ -90,7 +110,8 @@ impl TokenStore {
 
         // Update in-memory cache
         {
-            let mut tokens = self.tokens.write().unwrap();
+            let mut tokens = self.tokens.write()
+                .expect("Token store lock poisoned during write - cannot proceed safely");
             tokens.insert(provider_id, token);
         }
 
@@ -102,14 +123,16 @@ impl TokenStore {
 
     /// Get token for a provider
     pub fn get(&self, provider_id: &str) -> Option<OAuthToken> {
-        let tokens = self.tokens.read().unwrap();
+        let tokens = self.tokens.read()
+            .expect("Token store lock poisoned during read - cannot proceed safely");
         tokens.get(provider_id).cloned()
     }
 
     /// Remove token for a provider
     pub fn remove(&self, provider_id: &str) -> Result<()> {
         {
-            let mut tokens = self.tokens.write().unwrap();
+            let mut tokens = self.tokens.write()
+                .expect("Token store lock poisoned during write - cannot proceed safely");
             tokens.remove(provider_id);
         }
 
@@ -121,19 +144,22 @@ impl TokenStore {
 
     /// List all provider IDs that have tokens
     pub fn list_providers(&self) -> Vec<String> {
-        let tokens = self.tokens.read().unwrap();
+        let tokens = self.tokens.read()
+            .expect("Token store lock poisoned during read - cannot proceed safely");
         tokens.keys().cloned().collect()
     }
 
     /// Get all tokens
     pub fn all(&self) -> HashMap<String, OAuthToken> {
-        let tokens = self.tokens.read().unwrap();
+        let tokens = self.tokens.read()
+            .expect("Token store lock poisoned during read - cannot proceed safely");
         tokens.clone()
     }
 
     /// Persist tokens to file
     fn persist(&self) -> Result<()> {
-        let tokens = self.tokens.read().unwrap();
+        let tokens = self.tokens.read()
+            .expect("Token store lock poisoned during read - cannot proceed safely");
         let json = serde_json::to_string_pretty(&*tokens)
             .context("Failed to serialize tokens")?;
 
@@ -166,8 +192,8 @@ mod tests {
 
         let token = OAuthToken {
             provider_id: "test-provider".to_string(),
-            access_token: "access-123".to_string(),
-            refresh_token: "refresh-456".to_string(),
+            access_token: SecretString::new("access-123".to_string()),
+            refresh_token: SecretString::new("refresh-456".to_string()),
             expires_at: Utc::now() + chrono::Duration::hours(1),
             enterprise_url: None,
             project_id: None,
@@ -176,8 +202,8 @@ mod tests {
         store.save(token.clone()).unwrap();
 
         let retrieved = store.get("test-provider").unwrap();
-        assert_eq!(retrieved.access_token, "access-123");
-        assert_eq!(retrieved.refresh_token, "refresh-456");
+        assert_eq!(retrieved.access_token.expose_secret(), "access-123");
+        assert_eq!(retrieved.refresh_token.expose_secret(), "refresh-456");
 
         store.remove("test-provider").unwrap();
         assert!(store.get("test-provider").is_none());
@@ -187,8 +213,8 @@ mod tests {
     fn test_token_expiration() {
         let expired_token = OAuthToken {
             provider_id: "test".to_string(),
-            access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            access_token: SecretString::new("token".to_string()),
+            refresh_token: SecretString::new("refresh".to_string()),
             expires_at: Utc::now() - chrono::Duration::hours(1),
             enterprise_url: None,
             project_id: None,
@@ -199,8 +225,8 @@ mod tests {
 
         let valid_token = OAuthToken {
             provider_id: "test".to_string(),
-            access_token: "token".to_string(),
-            refresh_token: "refresh".to_string(),
+            access_token: SecretString::new("token".to_string()),
+            refresh_token: SecretString::new("refresh".to_string()),
             expires_at: Utc::now() + chrono::Duration::hours(1),
             enterprise_url: None,
             project_id: None,

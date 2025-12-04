@@ -8,6 +8,7 @@ use std::pin::Pin;
 use futures::stream::Stream;
 use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose};
+use secrecy::ExposeSecret;
 
 /// Official Codex instructions from OpenAI
 /// Source: https://github.com/openai/codex (rust-v0.58.0)
@@ -238,6 +239,8 @@ struct StreamTransformState {
     next_block_index: u32,
     /// Has finish_reason been received?
     stream_ended: bool,
+    /// Did this response include any tool calls? (for correct stop_reason)
+    had_tool_calls: bool,
 }
 
 /// OpenAI provider implementation
@@ -309,8 +312,10 @@ impl OpenAIProvider {
                                                             "reasoning" => {
                                                                 // Convert OpenAI reasoning to Claude thinking block
                                                                 content_blocks.push(ContentBlock::Thinking {
-                                                                    thinking: text.to_string(),
-                                                                    signature: String::new(), // OpenAI doesn't have signature
+                                                                    raw: serde_json::json!({
+                                                                        "thinking": text,
+                                                                        "signature": "" // OpenAI doesn't have signature
+                                                                    }),
                                                                 });
                                                             }
                                                             "message" => {
@@ -570,7 +575,7 @@ impl OpenAIProvider {
                         match oauth_client.refresh_token(oauth_provider_id).await {
                             Ok(new_token) => {
                                 tracing::info!("✅ Token refreshed successfully");
-                                return Ok(new_token.access_token);
+                                return Ok(new_token.access_token.expose_secret().to_string());
                             }
                             Err(e) => {
                                 tracing::error!("❌ Failed to refresh token: {}", e);
@@ -581,7 +586,7 @@ impl OpenAIProvider {
                         }
                     } else {
                         // Token is still valid
-                        return Ok(token.access_token);
+                        return Ok(token.access_token.expose_secret().to_string());
                     }
                 } else {
                     return Err(ProviderError::AuthError(format!(
@@ -1094,6 +1099,7 @@ impl OpenAIProvider {
                         let block_index = state.next_block_index;
                         state.tool_blocks.insert(tool_index, block_index);
                         state.next_block_index += 1;
+                        state.had_tool_calls = true; // Track that this response included tool calls
 
                         tracing::debug!("🔧 Tool start: {} (id: {}) at block index {}", tool_name, tool_id, block_index);
 
@@ -1171,11 +1177,20 @@ impl OpenAIProvider {
 
                 // Emit message_delta with stop reason
                 // Mapping: OpenAI finish_reason → Anthropic stop_reason
-                let stop_reason = match reason.as_str() {
-                    "stop" => "end_turn",
-                    "length" => "max_tokens",
-                    "tool_calls" => "tool_use", // Model wants to execute tools
-                    _ => "end_turn"
+                // IMPORTANT: If this response included any tool calls, force stop_reason="tool_use"
+                // even if provider sent finish_reason="stop" (some providers do this incorrectly)
+                let stop_reason = if state.had_tool_calls {
+                    if reason.as_str() != "tool_calls" {
+                        tracing::info!("🔧 Correcting stop_reason: provider sent finish_reason='{}' but response had tool calls, using stop_reason='tool_use'", reason);
+                    }
+                    "tool_use"
+                } else {
+                    match reason.as_str() {
+                        "stop" => "end_turn",
+                        "length" => "max_tokens",
+                        "tool_calls" => "tool_use", // Model wants to execute tools
+                        _ => "end_turn"
+                    }
                 };
                 let message_delta = serde_json::json!({
                     "type": "message_delta",
@@ -1194,6 +1209,8 @@ impl OpenAIProvider {
                     "type": "message_stop"
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
+                tracing::debug!("✅ Sent message_stop event, stream_ended=true");
+                tracing::debug!("📤 Termination sequence:\n{}", output);
             }
         }
 
@@ -1403,8 +1420,8 @@ impl AnthropicProvider for OpenAIProvider {
                                 crate::models::ContentBlock::ToolResult { content, .. } => {
                                     Some(content.to_string())
                                 }
-                                crate::models::ContentBlock::Thinking { thinking, .. } => {
-                                    Some(thinking.clone())
+                                crate::models::ContentBlock::Thinking { raw } => {
+                                    raw.get("thinking").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 }
                                 _ => None,
                             }
@@ -1554,6 +1571,8 @@ impl AnthropicProvider for OpenAIProvider {
 
                                 if !sse_output.is_empty() {
                                     tracing::debug!("SSE: {} bytes", sse_output.len());
+                                } else {
+                                    tracing::debug!("SSE: empty output (will be filtered)");
                                 }
 
                                 // Return as raw bytes (already SSE-formatted)
@@ -1578,6 +1597,8 @@ impl AnthropicProvider for OpenAIProvider {
         // Some providers close streams without sending finish_reason
         let finalized_stream = transformed_stream.chain(futures::stream::once(async move {
             let state = state_for_cleanup.lock().unwrap();
+            tracing::debug!("🏁 Stream finalization: message_started={}, stream_ended={}",
+                state.message_started, state.stream_ended);
 
             // Only send end events if stream didn't end properly
             if state.message_started && !state.stream_ended {
@@ -1624,6 +1645,7 @@ impl AnthropicProvider for OpenAIProvider {
 
                 Ok(Bytes::from(output))
             } else {
+                tracing::debug!("🏁 Stream properly ended, no finalization needed");
                 Ok(Bytes::new())
             }
         }))
@@ -1633,6 +1655,6 @@ impl AnthropicProvider for OpenAIProvider {
     }
 
     fn supports_model(&self, model: &str) -> bool {
-        self.models.iter().any(|m| m == model)
+        self.models.iter().any(|m| m.eq_ignore_ascii_case(model))
     }
 }

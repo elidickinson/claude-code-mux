@@ -117,10 +117,14 @@ pub enum ContentBlock {
         tool_use_id: String,
         content: ToolResultContent,
     },
+    /// Thinking block - stored as raw JSON to preserve exact signature.
+    /// Anthropic validates signatures against exact JSON bytes, so we must
+    /// avoid any deserialization/reserialization that could change field order.
     #[serde(rename = "thinking")]
     Thinking {
-        thinking: String,
-        signature: String,
+        /// Raw JSON fields passed through unchanged (contains "thinking" and "signature")
+        #[serde(flatten)]
+        raw: serde_json::Value,
     },
 }
 
