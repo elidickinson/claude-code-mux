@@ -1610,10 +1610,16 @@
                     <div class="card mt-6">
                         <h2 class="text-xl font-bold mb-4">Prompt Rules</h2>
                         <p class="text-gray-600 mb-4">
-                            Pattern-based routing rules (edit in config file)
+                            Route to specific models when patterns match the prompt.
                         </p>
                         <div id="prompt-rules-list">
                             <p class="text-gray-500 italic">No prompt rules configured</p>
+                        </div>
+                        <div class="mt-4 p-3 bg-gray-50 rounded text-sm text-gray-600">
+                            <p class="font-semibold mb-1">Add to config.toml:</p>
+                            <pre class="font-mono text-xs bg-gray-100 p-2 rounded overflow-x-auto">[[router.prompt_rules]]
+pattern = "(?i)commit.*change"  # regex or plain string
+model = "your-model-name"</pre>
                         </div>
                     </div>
                 </div>

@@ -289,6 +289,7 @@ async fn get_config_json(State(state): State<Arc<AppState>>) -> impl IntoRespons
             "background": state.config.router.background,
             "think": state.config.router.think,
             "websearch": state.config.router.websearch,
+            "prompt_rules": state.config.router.prompt_rules,
         },
         "providers": state.config.providers,
         "models": state.config.models,
