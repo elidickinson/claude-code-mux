@@ -99,9 +99,9 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
         info!("🔐 Loaded {} OAuth tokens from storage", existing_tokens.len());
     }
 
-    // Initialize provider registry from config (with token store)
+    // Initialize provider registry from config (with token store and model mappings)
     let provider_registry = Arc::new(
-        ProviderRegistry::from_configs(&config.providers, Some(token_store.clone()))
+        ProviderRegistry::from_configs_with_models(&config.providers, Some(token_store.clone()), &config.models)
             .map_err(|e| anyhow::anyhow!("Failed to initialize provider registry: {}", e))?
     );
 
@@ -357,36 +357,31 @@ async fn update_config_json(
     // Update router section if provided
     if let Some(router) = new_config.get("router") {
         if let Some(router_table) = config.get_mut("router").and_then(|v| v.as_table_mut()) {
+            // Helper to update or remove a router field
+            let update_field = |table: &mut toml::map::Map<String, toml::Value>, key: &str, value: Option<&serde_json::Value>| {
+                if let Some(val) = value {
+                    if let Some(s) = val.as_str() {
+                        table.insert(key.to_string(), toml::Value::String(s.to_string()));
+                    }
+                } else {
+                    // Remove field if not present in incoming config
+                    table.remove(key);
+                }
+            };
+
+            // Default is required, always update if present
             if let Some(default) = router.get("default") {
                 if let Some(s) = default.as_str() {
                     router_table.insert("default".to_string(), toml::Value::String(s.to_string()));
                 }
             }
-            if let Some(think) = router.get("think") {
-                if let Some(s) = think.as_str() {
-                    router_table.insert("think".to_string(), toml::Value::String(s.to_string()));
-                }
-            }
-            if let Some(ws) = router.get("websearch") {
-                if let Some(s) = ws.as_str() {
-                    router_table.insert("websearch".to_string(), toml::Value::String(s.to_string()));
-                }
-            }
-            if let Some(bg) = router.get("background") {
-                if let Some(s) = bg.as_str() {
-                    router_table.insert("background".to_string(), toml::Value::String(s.to_string()));
-                }
-            }
-            if let Some(auto_map) = router.get("auto_map_regex") {
-                if let Some(s) = auto_map.as_str() {
-                    router_table.insert("auto_map_regex".to_string(), toml::Value::String(s.to_string()));
-                }
-            }
-            if let Some(bg_regex) = router.get("background_regex") {
-                if let Some(s) = bg_regex.as_str() {
-                    router_table.insert("background_regex".to_string(), toml::Value::String(s.to_string()));
-                }
-            }
+
+            // Optional fields - remove if not present
+            update_field(router_table, "think", router.get("think"));
+            update_field(router_table, "websearch", router.get("websearch"));
+            update_field(router_table, "background", router.get("background"));
+            update_field(router_table, "auto_map_regex", router.get("auto_map_regex"));
+            update_field(router_table, "background_regex", router.get("background_regex"));
         }
     }
 
@@ -599,6 +594,45 @@ async fn handle_openai_chat_completions(
                 // Update model to actual model name
                 anthropic_request.model = mapping.actual_model.clone();
 
+                // Inject continuation prompt if configured (for models that stop after tool use)
+                if mapping.inject_continuation_prompt {
+                    use crate::models::{Message, MessageContent, ContentBlock};
+
+                    // Check if last message contains tool results without text content
+                    if let Some(last_msg) = anthropic_request.messages.last() {
+                        let has_tool_results = match &last_msg.content {
+                            MessageContent::Blocks(blocks) => {
+                                blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                            }
+                            _ => false,
+                        };
+
+                        let has_text = match &last_msg.content {
+                            MessageContent::Text(text) => !text.trim().is_empty(),
+                            MessageContent::Blocks(blocks) => {
+                                blocks.iter().any(|b| {
+                                    if let ContentBlock::Text { text } = b {
+                                        !text.trim().is_empty()
+                                    } else {
+                                        false
+                                    }
+                                })
+                            }
+                        };
+
+                        // If last message has tool results but no text, inject continuation prompt
+                        if has_tool_results && !has_text {
+                            info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
+                            anthropic_request.messages.push(Message {
+                                role: "user".to_string(),
+                                content: MessageContent::Text(
+                                    "Please continue with the next task.".to_string()
+                                ),
+                            });
+                        }
+                    }
+                }
+
                 match provider.send_message(anthropic_request.clone()).await {
                     Ok(anthropic_response) => {
                         info!("✅ Request succeeded with provider: {}", mapping.provider);
@@ -759,6 +793,45 @@ async fn handle_messages(
 
                 // Update system if modified during routing
                 anthropic_request.system = request_for_routing.system.clone();
+
+                // Inject continuation prompt if configured (for models that stop after tool use)
+                if mapping.inject_continuation_prompt {
+                    use crate::models::{Message, MessageContent, ContentBlock};
+
+                    // Check if last message contains tool results without text content
+                    if let Some(last_msg) = anthropic_request.messages.last() {
+                        let has_tool_results = match &last_msg.content {
+                            MessageContent::Blocks(blocks) => {
+                                blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+                            }
+                            _ => false,
+                        };
+
+                        let has_text = match &last_msg.content {
+                            MessageContent::Text(text) => !text.trim().is_empty(),
+                            MessageContent::Blocks(blocks) => {
+                                blocks.iter().any(|b| {
+                                    if let ContentBlock::Text { text } = b {
+                                        !text.trim().is_empty()
+                                    } else {
+                                        false
+                                    }
+                                })
+                            }
+                        };
+
+                        // If last message has tool results but no text, inject continuation prompt
+                        if has_tool_results && !has_text {
+                            info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
+                            anthropic_request.messages.push(Message {
+                                role: "user".to_string(),
+                                content: MessageContent::Text(
+                                    "Please continue with the next task.".to_string()
+                                ),
+                            });
+                        }
+                    }
+                }
 
                 // Check if streaming is requested
                 let is_streaming = anthropic_request.stream == Some(true);

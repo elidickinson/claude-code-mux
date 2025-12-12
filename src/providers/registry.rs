@@ -1,6 +1,7 @@
 use super::{AnthropicProvider, ProviderConfig, OpenAIProvider, AnthropicCompatibleProvider, error::ProviderError};
 use super::gemini::GeminiProvider;
 use crate::auth::TokenStore;
+use crate::cli::ModelConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -23,6 +24,11 @@ impl ProviderRegistry {
 
     /// Load providers from configuration
     pub fn from_configs(configs: &[ProviderConfig], token_store: Option<TokenStore>) -> Result<Self, ProviderError> {
+        Self::from_configs_with_models(configs, token_store, &[])
+    }
+
+    /// Load providers from configuration with model mappings
+    pub fn from_configs_with_models(configs: &[ProviderConfig], token_store: Option<TokenStore>, models: &[ModelConfig]) -> Result<Self, ProviderError> {
         let mut registry = Self::new();
 
         for config in configs {
@@ -193,6 +199,14 @@ impl ProviderRegistry {
             registry.providers.insert(config.name.clone(), Arc::new(provider));
         }
 
+        // Populate model_to_provider mappings from model configurations
+        for model in models {
+            // Map each model name to its first (highest priority) provider
+            if let Some(first_mapping) = model.mappings.first() {
+                registry.model_to_provider.insert(model.name.clone(), first_mapping.provider.clone());
+            }
+        }
+
         Ok(registry)
     }
 
@@ -253,5 +267,72 @@ mod tests {
         let registry = ProviderRegistry::new();
         let result = registry.get_provider_for_model("gpt-4");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_model_counting_with_configs() {
+        use crate::providers::{ProviderConfig, AuthType};
+
+        let providers = vec![
+            ProviderConfig {
+                name: "provider-a".to_string(),
+                provider_type: "anthropic".to_string(),
+                auth_type: AuthType::ApiKey,
+                api_key: Some("test-key-1".to_string()),
+                base_url: None,
+                models: vec![],
+                enabled: Some(true),
+                oauth_provider: None,
+                project_id: None,
+                location: None,
+            },
+            ProviderConfig {
+                name: "provider-b".to_string(),
+                provider_type: "anthropic".to_string(),
+                auth_type: AuthType::ApiKey,
+                api_key: Some("test-key-2".to_string()),
+                base_url: None,
+                models: vec![],
+                enabled: Some(true),
+                oauth_provider: None,
+                project_id: None,
+                location: None,
+            },
+        ];
+
+        let models = vec![
+            crate::cli::ModelConfig {
+                name: "model-1".to_string(),
+                mappings: vec![
+                    crate::cli::ModelMapping {
+                        priority: 1,
+                        provider: "provider-a".to_string(),
+                        actual_model: "actual-model-1".to_string(),
+                    }
+                ],
+            },
+            crate::cli::ModelConfig {
+                name: "model-2".to_string(),
+                mappings: vec![
+                    crate::cli::ModelMapping {
+                        priority: 1,
+                        provider: "provider-b".to_string(),
+                        actual_model: "actual-model-2".to_string(),
+                    }
+                ],
+            },
+        ];
+
+        // Actually test the method we implemented
+        let registry = ProviderRegistry::from_configs_with_models(
+            &providers,
+            None,  // token_store
+            &models
+        ).unwrap();
+
+        assert_eq!(registry.list_models().len(), 2);
+        assert!(registry.list_models().contains(&"model-1".to_string()));
+        assert!(registry.list_models().contains(&"model-2".to_string()));
+        assert_eq!(registry.list_providers().len(), 2);
     }
 }
