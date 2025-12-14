@@ -285,7 +285,7 @@ impl Router {
                 let text: String = blocks
                     .iter()
                     .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.clone()),
+                        ContentBlock::Text { text, .. } => Some(text.clone()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -320,7 +320,7 @@ impl Router {
                 MessageContent::Blocks(blocks) => {
                     // Strip from all text blocks
                     for block in blocks.iter_mut() {
-                        if let ContentBlock::Text { text } = block {
+                        if let ContentBlock::Text { text, .. } = block {
                             let stripped = regex.replace_all(text, "").to_string();
                             if stripped != *text {
                                 debug!("🔪 Stripped matched phrase from prompt block");

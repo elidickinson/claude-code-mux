@@ -101,7 +101,11 @@ pub enum ToolResultBlock {
 #[serde(tag = "type")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text { 
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<serde_json::Value>,
+    },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,
