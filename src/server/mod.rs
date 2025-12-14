@@ -2,7 +2,7 @@ mod openai_compat;
 mod oauth_handlers;
 
 use crate::cli::AppConfig;
-use crate::models::AnthropicRequest;
+use crate::models::{AnthropicRequest, Message, MessageContent};
 use crate::router::Router;
 use crate::providers::ProviderRegistry;
 use crate::auth::TokenStore;
@@ -596,37 +596,13 @@ async fn handle_openai_chat_completions(
 
                 // Inject continuation prompt if configured (for models that stop after tool use)
                 if mapping.inject_continuation_prompt {
-                    use crate::models::{Message, MessageContent, ContentBlock};
-
-                    // Check if last message contains tool results without text content
                     if let Some(last_msg) = anthropic_request.messages.last() {
-                        let has_tool_results = match &last_msg.content {
-                            MessageContent::Blocks(blocks) => {
-                                blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
-                            }
-                            _ => false,
-                        };
-
-                        let has_text = match &last_msg.content {
-                            MessageContent::Text(text) => !text.trim().is_empty(),
-                            MessageContent::Blocks(blocks) => {
-                                blocks.iter().any(|b| {
-                                    if let ContentBlock::Text { text } = b {
-                                        !text.trim().is_empty()
-                                    } else {
-                                        false
-                                    }
-                                })
-                            }
-                        };
-
-                        // If last message has tool results but no text, inject continuation prompt
-                        if has_tool_results && !has_text {
+                        if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
                             anthropic_request.messages.push(Message {
                                 role: "user".to_string(),
                                 content: MessageContent::Text(
-                                    "Please continue with the next task.".to_string()
+                                    "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string()
                                 ),
                             });
                         }
@@ -697,6 +673,36 @@ async fn handle_openai_chat_completions(
             decision.model_name
         )));
     }
+}
+
+/// Check if message has tool results but no text content
+/// (indicates model should continue after tool execution)
+fn should_inject_continuation(msg: &crate::models::Message) -> bool {
+    use crate::models::MessageContent;
+    use crate::models::ContentBlock;
+
+    let has_tool_results = match &msg.content {
+        MessageContent::Blocks(blocks) => {
+            blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
+        }
+        _ => false,
+    };
+
+    let has_text = match &msg.content {
+        MessageContent::Text(text) => !text.trim().is_empty(),
+        MessageContent::Blocks(blocks) => {
+            blocks.iter().any(|b| {
+                if let ContentBlock::Text { text } = b {
+                    !text.trim().is_empty()
+                } else {
+                    false
+                }
+            })
+        }
+    };
+
+    // Inject if message has tool results but no text
+    has_tool_results && !has_text
 }
 
 /// Handle /v1/messages requests (both streaming and non-streaming)
@@ -796,37 +802,13 @@ async fn handle_messages(
 
                 // Inject continuation prompt if configured (for models that stop after tool use)
                 if mapping.inject_continuation_prompt {
-                    use crate::models::{Message, MessageContent, ContentBlock};
-
-                    // Check if last message contains tool results without text content
                     if let Some(last_msg) = anthropic_request.messages.last() {
-                        let has_tool_results = match &last_msg.content {
-                            MessageContent::Blocks(blocks) => {
-                                blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
-                            }
-                            _ => false,
-                        };
-
-                        let has_text = match &last_msg.content {
-                            MessageContent::Text(text) => !text.trim().is_empty(),
-                            MessageContent::Blocks(blocks) => {
-                                blocks.iter().any(|b| {
-                                    if let ContentBlock::Text { text } = b {
-                                        !text.trim().is_empty()
-                                    } else {
-                                        false
-                                    }
-                                })
-                            }
-                        };
-
-                        // If last message has tool results but no text, inject continuation prompt
-                        if has_tool_results && !has_text {
+                        if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
                             anthropic_request.messages.push(Message {
                                 role: "user".to_string(),
                                 content: MessageContent::Text(
-                                    "Please continue with the next task.".to_string()
+                                    "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string()
                                 ),
                             });
                         }
