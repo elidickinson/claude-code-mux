@@ -1619,7 +1619,8 @@
                             <p class="font-semibold mb-1">Add to config.toml:</p>
                             <pre class="font-mono text-xs bg-gray-100 p-2 rounded overflow-x-auto">[[router.prompt_rules]]
 pattern = "(?i)commit.*change"  # regex or plain string
-model = "your-model-name"</pre>
+model = "your-model-name"
+strip_match = false             # strip matched phrase (default: false)</pre>
                         </div>
                     </div>
                 </div>
@@ -2258,6 +2259,7 @@ model = "your-model-name"</pre>
                                 <tr class="text-left text-gray-600 border-b">
                                     <th class="pb-2 font-semibold">Pattern</th>
                                     <th class="pb-2 font-semibold">Model</th>
+                                    <th class="pb-2 font-semibold">Strip Match</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -2265,6 +2267,7 @@ model = "your-model-name"</pre>
                                     <tr class="border-b border-gray-100">
                                         <td class="py-2 font-mono text-xs">${escapeHtml(rule.pattern)}</td>
                                         <td class="py-2">${escapeHtml(rule.model)}</td>
+                                        <td class="py-2">${rule.strip_match ? '✓' : ''}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>

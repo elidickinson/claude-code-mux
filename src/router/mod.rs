@@ -9,6 +9,7 @@ use tracing::{debug, info};
 pub struct CompiledPromptRule {
     pub regex: Regex,
     pub model: String,
+    pub strip_match: bool,
 }
 
 /// Router for intelligently selecting models based on request characteristics
@@ -96,6 +97,7 @@ impl Router {
                     Ok(regex) => Some(CompiledPromptRule {
                         regex,
                         model: rule.model.clone(),
+                        strip_match: rule.strip_match,
                     }),
                     Err(e) => {
                         eprintln!(
@@ -235,7 +237,8 @@ impl Router {
 
     /// Match prompt rules against the last user message content
     /// Returns the model name if a rule matches, None otherwise
-    fn match_prompt_rule(&self, request: &AnthropicRequest) -> Option<String> {
+    /// Strips the matched phrase from the prompt if strip_match is true
+    fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<String> {
         if self.prompt_rules.is_empty() {
             return None;
         }
@@ -247,10 +250,17 @@ impl Router {
         for rule in &self.prompt_rules {
             if rule.regex.is_match(&user_content) {
                 debug!(
-                    "📝 Prompt rule matched: pattern='{}' → model='{}'",
+                    "📝 Prompt rule matched: pattern='{}' → model='{}' (strip_match={})",
                     rule.regex.as_str(),
-                    rule.model
+                    rule.model,
+                    rule.strip_match
                 );
+
+                // Strip the matched phrase from the last user message if requested
+                if rule.strip_match {
+                    self.strip_match_from_last_user_message(request, &rule.regex);
+                }
+
                 return Some(rule.model.clone());
             }
         }
@@ -284,6 +294,40 @@ impl Router {
                     None
                 } else {
                     Some(text)
+                }
+            }
+        }
+    }
+
+    /// Strip the matched phrase from the last user message
+    fn strip_match_from_last_user_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
+        // Find the last user message (mutable)
+        let last_user = request
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == "user");
+
+        if let Some(msg) = last_user {
+            match &mut msg.content {
+                MessageContent::Text(text) => {
+                    let stripped = regex.replace_all(text, "").to_string();
+                    if stripped != *text {
+                        debug!("🔪 Stripped matched phrase from prompt");
+                        *text = stripped;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    // Strip from all text blocks
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::Text { text } = block {
+                            let stripped = regex.replace_all(text, "").to_string();
+                            if stripped != *text {
+                                debug!("🔪 Stripped matched phrase from prompt block");
+                                *text = stripped;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -527,5 +571,71 @@ mod tests {
         let decision = router.route(&mut request).unwrap();
         assert_eq!(decision.route_type, RouteType::Default);
         assert_eq!(decision.model_name, "glm-4.6"); // Uses original model name (no auto-mapping)
+    }
+
+    #[test]
+    fn test_prompt_rule_matching() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: "(?i)commit.*changes".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("Please commit these changes");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+    }
+
+    #[test]
+    fn test_prompt_rule_strip_match() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[fast\]".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("[fast] Write a function to sort an array");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+
+        // Verify the matched phrase was stripped from the prompt
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert_eq!(text, " Write a function to sort an array");
+            assert!(!text.contains("[fast]"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[test]
+    fn test_prompt_rule_no_strip_match() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[fast\]".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("[fast] Write a function to sort an array");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+
+        // Verify the matched phrase was NOT stripped (strip_match = false)
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert!(text.contains("[fast]"));
+        } else {
+            panic!("Expected text content");
+        }
     }
 }

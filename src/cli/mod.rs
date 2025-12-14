@@ -104,6 +104,9 @@ pub struct PromptRule {
     pub pattern: String,
     /// Model to route to when pattern matches
     pub model: String,
+    /// Strip the matched phrase from the prompt (default: false)
+    #[serde(default)]
+    pub strip_match: bool,
 }
 
 /// Model configuration with 1:N provider mappings
@@ -242,6 +245,7 @@ default = "placeholder-model"
 # [[router.prompt_rules]]
 # pattern = "(?i)commit.*changes"   # Regex pattern to match
 # model = "fast-model"              # Model to route to
+# strip_match = false               # Strip matched phrase from prompt (default: false)
 
 # Providers configuration
 # Add providers via the web UI or edit this section
