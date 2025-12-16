@@ -932,6 +932,8 @@ impl OpenAIProvider {
             usage: Usage {
                 input_tokens: response.usage.prompt_tokens,
                 output_tokens: response.usage.completion_tokens,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
             },
         }
     }
@@ -964,6 +966,8 @@ impl OpenAIProvider {
             usage: Usage {
                 input_tokens: response.usage.input_tokens,
                 output_tokens: response.usage.output_tokens,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
             },
         }
     }
@@ -1331,6 +1335,8 @@ impl AnthropicProvider for OpenAIProvider {
                 usage: Usage {
                     input_tokens: 0,  // SSE doesn't provide token counts
                     output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
                 },
             })
         } else {

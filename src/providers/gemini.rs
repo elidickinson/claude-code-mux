@@ -348,6 +348,8 @@ impl GeminiProvider {
                 .as_ref()
                 .and_then(|u| u.candidates_token_count)
                 .unwrap_or(0) as u32,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         };
 
         Ok(ProviderResponse {

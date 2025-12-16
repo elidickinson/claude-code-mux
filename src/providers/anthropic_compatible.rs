@@ -495,10 +495,12 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             });
         }
 
-        // Return the byte stream directly
-        let stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
+        // Wrap stream with logging to capture cache statistics
+        use crate::providers::streaming::LoggingSseStream;
+        let byte_stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
+        let logging_stream = LoggingSseStream::new(byte_stream, self.name.clone());
 
-        Ok(Box::pin(stream))
+        Ok(Box::pin(logging_stream))
     }
 
     fn supports_model(&self, model: &str) -> bool {
