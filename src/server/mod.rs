@@ -527,7 +527,6 @@ async fn handle_openai_chat_completions(
     Json(openai_request): Json<openai_compat::OpenAIRequest>,
 ) -> Result<Response, AppError> {
     let model = openai_request.model.clone();
-    info!("Received OpenAI-compatible request for model: {}", model);
     let start_time = std::time::Instant::now();
 
     // Streaming is not supported for /v1/chat/completions
@@ -541,22 +540,14 @@ async fn handle_openai_chat_completions(
     let mut anthropic_request = openai_compat::transform_openai_to_anthropic(openai_request)
         .map_err(|e| AppError::ParseError(format!("Failed to transform OpenAI request: {}", e)))?;
 
-    info!("Transformed OpenAI request to Anthropic format");
-
     // 2. Route the request (may modify system prompt to remove CCM-SUBAGENT-MODEL tag)
     let decision = state
         .router
         .route(&mut anthropic_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
-    info!(
-        "🎯 Routed to: {} ({})",
-        decision.model_name, decision.route_type
-    );
-
     // 3. Try model mappings with fallback (1:N mapping)
     if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
-        info!("📋 Found {} provider mappings for model: {}", model_config.mappings.len(), decision.model_name);
 
         // Check for X-Provider header to override priority
         let forced_provider = headers
@@ -588,23 +579,29 @@ async fn handle_openai_chat_completions(
 
         // Try each mapping in priority order (or just the forced one)
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            info!(
-                "🔄 Trying mapping {}/{}: provider={}, actual_model={}",
-                idx + 1,
-                sorted_mappings.len(),
-                mapping.provider,
-                mapping.actual_model
-            );
-
             // Try to get provider from registry
             if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
+                // Build routing info string
+                let routing_info = if sorted_mappings.len() > 1 {
+                    format!(" [{}/{}]", idx + 1, sorted_mappings.len())
+                } else {
+                    String::new()
+                };
+
+                info!(
+                    "→ {} via {}/{} [{}:sync]{}",
+                    model,
+                    mapping.provider,
+                    mapping.actual_model,
+                    decision.route_type,
+                    routing_info
+                );
+
                 // Update model to actual model name
                 anthropic_request.model = mapping.actual_model.clone();
 
                 match provider.send_message(anthropic_request.clone()).await {
                     Ok(anthropic_response) => {
-                        info!("✅ Request succeeded with provider: {}", mapping.provider);
-
                         // Calculate and log metrics
                         let latency_ms = start_time.elapsed().as_millis() as u64;
                         let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
@@ -677,7 +674,6 @@ async fn handle_messages(
         .get("model")
         .and_then(|m| m.as_str())
         .unwrap_or("unknown");
-    info!("Received request for model: {}", model);
     let start_time = std::time::Instant::now();
 
     // DEBUG: Log request body for debugging
@@ -698,14 +694,8 @@ async fn handle_messages(
         .route(&mut request_for_routing)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
-    info!(
-        "🎯 Routed to: {} ({})",
-        decision.model_name, decision.route_type
-    );
-
     // 3. Try model mappings with fallback (1:N mapping)
     if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
-        info!("📋 Found {} provider mappings for model: {}", model_config.mappings.len(), decision.model_name);
 
         // Check for X-Provider header to override priority
         let forced_provider = headers
@@ -737,14 +727,6 @@ async fn handle_messages(
 
         // Try each mapping in priority order (or just the forced one)
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            info!(
-                "🔄 Trying mapping {}/{}: provider={}, actual_model={}",
-                idx + 1,
-                sorted_mappings.len(),
-                mapping.provider,
-                mapping.actual_model
-            );
-
             // Try to get provider from registry
             if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
                 // Trust the model mapping configuration - no need to validate
@@ -765,13 +747,29 @@ async fn handle_messages(
                 // Check if streaming is requested
                 let is_streaming = anthropic_request.stream == Some(true);
 
+                // Build routing info string
+                let routing_info = if sorted_mappings.len() > 1 {
+                    format!(" [{}/{}]", idx + 1, sorted_mappings.len())
+                } else {
+                    String::new()
+                };
+
+                let stream_mode = if is_streaming { "stream" } else { "sync" };
+
+                info!(
+                    "→ {} via {}/{} [{}:{}]{}",
+                    model,
+                    mapping.provider,
+                    mapping.actual_model,
+                    decision.route_type,
+                    stream_mode,
+                    routing_info
+                );
+
                 if is_streaming {
                     // Streaming request
-                    info!("🌊 Streaming request to provider: {}", mapping.provider);
-
                     match provider.send_message_stream(anthropic_request).await {
                         Ok(stream) => {
-                            info!("✅ Streaming request started with provider: {}", mapping.provider);
 
                             // Write routing info for statusline
                             write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
