@@ -744,6 +744,32 @@ provider = "openrouter"
 
 If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
 
+### Continuation Prompt Injection
+
+Some models (like GLM-4.6) stop prematurely after tool calls instead of continuing with multi-step tasks. The `inject_continuation_prompt` flag fixes this:
+
+```toml
+[[models]]
+name = "glm-4.6"
+
+[[models.mappings]]
+actual_model = "glm-4.6"
+priority = 1
+provider = "zai"
+inject_continuation_prompt = true  # Keeps the model working through tasks
+```
+
+**How it works:**
+- Detects when a model returns only tool results without any text response
+- Appends "Please continue if you're confident on the next step" to the existing user message
+- Does NOT create a new message (preserves strict user/assistant alternation)
+- The continuation prompt appears as part of the tool_result message content
+
+**When to use:**
+- Your model stops after each tool call, waiting for you to prompt "continue"
+- You're using multi-step workflows (like TodoWrite lists) and the model abandons tasks mid-execution
+- Common with certain OpenAI-compatible models via third-party providers
+
 ### Statusline Script for Claude Code
 
 Claude Code Mux includes a statusline script that shows which model and provider are actually being used for each request.
