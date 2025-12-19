@@ -438,6 +438,7 @@ Navigate to **Test** tab:
 - **Example**: Claude Code Plan Mode (`/plan`)
 - **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
 - **Note**: The `thinking` parameter is passed through to Anthropic providers, enabling extended reasoning. OpenAI-compatible providers don't support this parameter.
+- **GLM Models**: The proxy extracts and displays GLM's `reasoning` output but does not preserve `reasoning_details` for conversation continuation.
 
 ### 4. Background Tasks
 - **Trigger**: ORIGINAL model name matches `background_regex` pattern
