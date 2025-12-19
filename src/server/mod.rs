@@ -611,15 +611,10 @@ async fn handle_openai_chat_completions(
 
                 // Inject continuation prompt if configured (for models that stop after tool use)
                 if mapping.inject_continuation_prompt {
-                    if let Some(last_msg) = anthropic_request.messages.last() {
+                    if let Some(last_msg) = anthropic_request.messages.last_mut() {
                         if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
-                            anthropic_request.messages.push(Message {
-                                role: "user".to_string(),
-                                content: MessageContent::Text(
-                                    "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string()
-                                ),
-                            });
+                            inject_continuation_text(last_msg);
                         }
                     }
                 }
@@ -718,6 +713,36 @@ fn should_inject_continuation(msg: &crate::models::Message) -> bool {
     has_tool_results && !has_text
 }
 
+/// Inject continuation text into the last user message
+/// Appends a text block to the existing message content (doesn't create a new message)
+fn inject_continuation_text(msg: &mut crate::models::Message) {
+    use crate::models::{MessageContent, ContentBlock};
+
+    match &mut msg.content {
+        MessageContent::Text(text) => {
+            // Convert to Blocks and append continuation
+            let original_text = text.clone();
+            msg.content = MessageContent::Blocks(vec![
+                ContentBlock::Text {
+                    text: original_text,
+                    cache_control: None,
+                },
+                ContentBlock::Text {
+                    text: "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string(),
+                    cache_control: None,
+                },
+            ]);
+        }
+        MessageContent::Blocks(blocks) => {
+            // Append continuation text to existing blocks
+            blocks.push(ContentBlock::Text {
+                text: "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string(),
+                cache_control: None,
+            });
+        }
+    }
+}
+
 /// Handle /v1/messages requests (both streaming and non-streaming)
 async fn handle_messages(
     State(state): State<Arc<AppState>>,
@@ -800,15 +825,10 @@ async fn handle_messages(
 
                 // Inject continuation prompt if configured (for models that stop after tool use)
                 if mapping.inject_continuation_prompt {
-                    if let Some(last_msg) = anthropic_request.messages.last() {
+                    if let Some(last_msg) = anthropic_request.messages.last_mut() {
                         if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
-                            anthropic_request.messages.push(Message {
-                                role: "user".to_string(),
-                                content: MessageContent::Text(
-                                    "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string()
-                                ),
-                            });
+                            inject_continuation_text(last_msg);
                         }
                     }
                 }
