@@ -195,6 +195,7 @@ pub struct CountTokensResponse {
 pub struct RouteDecision {
     pub model_name: String,
     pub route_type: RouteType,
+    pub matched_prompt: Option<String>,
 }
 
 /// Type of routing decision

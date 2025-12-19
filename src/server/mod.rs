@@ -581,20 +581,34 @@ async fn handle_openai_chat_completions(
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
             // Try to get provider from registry
             if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
-                // Build routing info string
-                let routing_info = if sorted_mappings.len() > 1 {
+                // Build retry indicator (only show if not first attempt)
+                let retry_info = if idx > 0 {
                     format!(" [{}/{}]", idx + 1, sorted_mappings.len())
                 } else {
                     String::new()
                 };
 
+                // Build route type display (include matched prompt snippet if available)
+                let route_type_display = match &decision.matched_prompt {
+                    Some(matched) => {
+                        // Trim prompt to max 30 chars
+                        let trimmed = if matched.len() > 30 {
+                            format!("{}...", &matched[..27])
+                        } else {
+                            matched.clone()
+                        };
+                        format!("{}:^{}", decision.route_type, trimmed)
+                    }
+                    None => decision.route_type.to_string(),
+                };
+
                 info!(
-                    "→ {} via {}/{} [{}:sync]{}",
+                    "[{:<25}:sync] {:<35} → {}/{}{}",
+                    route_type_display,
                     model,
                     mapping.provider,
                     mapping.actual_model,
-                    decision.route_type,
-                    routing_info
+                    retry_info
                 );
 
                 // Update model to actual model name
@@ -747,8 +761,8 @@ async fn handle_messages(
                 // Check if streaming is requested
                 let is_streaming = anthropic_request.stream == Some(true);
 
-                // Build routing info string
-                let routing_info = if sorted_mappings.len() > 1 {
+                // Build retry indicator (only show if not first attempt)
+                let retry_info = if idx > 0 {
                     format!(" [{}/{}]", idx + 1, sorted_mappings.len())
                 } else {
                     String::new()
@@ -756,14 +770,28 @@ async fn handle_messages(
 
                 let stream_mode = if is_streaming { "stream" } else { "sync" };
 
+                // Build route type display (include matched prompt snippet if available)
+                let route_type_display = match &decision.matched_prompt {
+                    Some(matched) => {
+                        // Trim prompt to max 30 chars
+                        let trimmed = if matched.len() > 30 {
+                            format!("{}...", &matched[..27])
+                        } else {
+                            matched.clone()
+                        };
+                        format!("{}:^{}", decision.route_type, trimmed)
+                    }
+                    None => decision.route_type.to_string(),
+                };
+
                 info!(
-                    "→ {} via {}/{} [{}:{}]{}",
+                    "[{:<25}:{}] {:<35} → {}/{}{}",
+                    route_type_display,
+                    stream_mode,
                     model,
                     mapping.provider,
                     mapping.actual_model,
-                    decision.route_type,
-                    stream_mode,
-                    routing_info
+                    retry_info
                 );
 
                 if is_streaming {

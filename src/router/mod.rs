@@ -141,42 +141,46 @@ impl Router {
         // 1. WebSearch (HIGHEST PRIORITY - tool-based detection)
         if let Some(ref websearch_model) = self.config.router.websearch {
             if self.has_web_search_tool(request) {
-                info!("🔍 Routing to websearch model (web_search tool detected)");
+                debug!("🔍 Routing to websearch model (web_search tool detected)");
                 return Ok(RouteDecision {
                     model_name: websearch_model.clone(),
                     route_type: RouteType::WebSearch,
+                    matched_prompt: None,
                 });
             }
         }
 
         // 2. Subagent Model (system prompt tag - explicit override)
         if let Some(model) = self.extract_subagent_model(request) {
-            info!(
+            debug!(
                 "🤖 Routing to subagent model (CCM-SUBAGENT-MODEL tag): {}",
                 model
             );
             return Ok(RouteDecision {
                 model_name: model,
                 route_type: RouteType::Default,
+                matched_prompt: None,
             });
         }
 
         // 3. Prompt Rules (pattern matching on user prompt)
-        if let Some(model) = self.match_prompt_rule(request) {
-            info!("📝 Routing to model via prompt rule match: {}", model);
+        if let Some((model, matched_text)) = self.match_prompt_rule(request) {
+            debug!("📝 Routing to model via prompt rule match: {}", model);
             return Ok(RouteDecision {
                 model_name: model,
                 route_type: RouteType::PromptRule,
+                matched_prompt: Some(matched_text),
             });
         }
 
         // 4. Think mode (Plan Mode / Reasoning)
         if let Some(ref think_model) = self.config.router.think {
             if self.is_plan_mode(request) {
-                info!("🧠 Routing to think model (Plan Mode detected)");
+                debug!("🧠 Routing to think model (Plan Mode detected)");
                 return Ok(RouteDecision {
                     model_name: think_model.clone(),
                     route_type: RouteType::Think,
+                    matched_prompt: None,
                 });
             }
         }
@@ -188,6 +192,7 @@ impl Router {
                 return Ok(RouteDecision {
                     model_name: background_model.clone(),
                     route_type: RouteType::Background,
+                    matched_prompt: None,
                 });
             }
         }
@@ -198,6 +203,7 @@ impl Router {
         Ok(RouteDecision {
             model_name: request.model.clone(),
             route_type: RouteType::Default,
+            matched_prompt: None,
         })
     }
 
@@ -236,9 +242,9 @@ impl Router {
     }
 
     /// Match prompt rules against the last user message content
-    /// Returns the model name if a rule matches, None otherwise
+    /// Returns (model_name, matched_text) if a rule matches, None otherwise
     /// Strips the matched phrase from the prompt if strip_match is true
-    fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<String> {
+    fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<(String, String)> {
         if self.prompt_rules.is_empty() {
             return None;
         }
@@ -248,7 +254,9 @@ impl Router {
 
         // Check each rule in order (first match wins)
         for rule in &self.prompt_rules {
-            if rule.regex.is_match(&user_content) {
+            if let Some(matched) = rule.regex.find(&user_content) {
+                let matched_text = matched.as_str().to_string();
+
                 debug!(
                     "📝 Prompt rule matched: pattern='{}' → model='{}' (strip_match={})",
                     rule.regex.as_str(),
@@ -261,7 +269,7 @@ impl Router {
                     self.strip_match_from_last_user_message(request, &rule.regex);
                 }
 
-                return Some(rule.model.clone());
+                return Some((rule.model.clone(), matched_text));
             }
         }
 
