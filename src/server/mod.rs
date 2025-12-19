@@ -705,7 +705,7 @@ fn should_inject_continuation(msg: &crate::models::Message) -> bool {
         MessageContent::Text(text) => !text.trim().is_empty(),
         MessageContent::Blocks(blocks) => {
             blocks.iter().any(|b| {
-                if let ContentBlock::Text { text } = b {
+                if let ContentBlock::Text { text, .. } = b {
                     !text.trim().is_empty()
                 } else {
                     false
