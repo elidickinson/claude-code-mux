@@ -770,6 +770,11 @@ inject_continuation_prompt = true  # Keeps the model working through tasks
 - You're using multi-step workflows (like TodoWrite lists) and the model abandons tasks mid-execution
 - Common with certain OpenAI-compatible models via third-party providers
 
+**Related issues:**
+- [Claude Code #6159: Agent stops mid-task](https://github.com/anthropics/claude-code/issues/6159) - Known Claude Code agent reliability issue
+- [Claude Code #4766: Agent keeps stopping](https://github.com/anthropics/claude-code/issues/4766) - Requires manual "continue" prompts
+- [GLM-4.5 #100: API missing reasoning traces](https://github.com/zai-org/GLM-4.5/issues/100) - GLM reasoning disappears after tool calls
+
 ### Statusline Script for Claude Code
 
 Claude Code Mux includes a statusline script that shows which model and provider are actually being used for each request.
