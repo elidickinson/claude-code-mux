@@ -9,6 +9,7 @@ use tracing::{debug, info};
 pub struct CompiledPromptRule {
     pub regex: Regex,
     pub model: String,
+    pub strip_match: bool,
 }
 
 /// Router for intelligently selecting models based on request characteristics
@@ -96,6 +97,7 @@ impl Router {
                     Ok(regex) => Some(CompiledPromptRule {
                         regex,
                         model: rule.model.clone(),
+                        strip_match: rule.strip_match,
                     }),
                     Err(e) => {
                         eprintln!(
@@ -139,42 +141,46 @@ impl Router {
         // 1. WebSearch (HIGHEST PRIORITY - tool-based detection)
         if let Some(ref websearch_model) = self.config.router.websearch {
             if self.has_web_search_tool(request) {
-                info!("🔍 Routing to websearch model (web_search tool detected)");
+                debug!("🔍 Routing to websearch model (web_search tool detected)");
                 return Ok(RouteDecision {
                     model_name: websearch_model.clone(),
                     route_type: RouteType::WebSearch,
+                    matched_prompt: None,
                 });
             }
         }
 
         // 2. Subagent Model (system prompt tag - explicit override)
         if let Some(model) = self.extract_subagent_model(request) {
-            info!(
+            debug!(
                 "🤖 Routing to subagent model (CCM-SUBAGENT-MODEL tag): {}",
                 model
             );
             return Ok(RouteDecision {
                 model_name: model,
                 route_type: RouteType::Default,
+                matched_prompt: None,
             });
         }
 
         // 3. Prompt Rules (pattern matching on user prompt)
-        if let Some(model) = self.match_prompt_rule(request) {
-            info!("📝 Routing to model via prompt rule match: {}", model);
+        if let Some((model, matched_text)) = self.match_prompt_rule(request) {
+            debug!("📝 Routing to model via prompt rule match: {}", model);
             return Ok(RouteDecision {
                 model_name: model,
                 route_type: RouteType::PromptRule,
+                matched_prompt: Some(matched_text),
             });
         }
 
         // 4. Think mode (Plan Mode / Reasoning)
         if let Some(ref think_model) = self.config.router.think {
             if self.is_plan_mode(request) {
-                info!("🧠 Routing to think model (Plan Mode detected)");
+                debug!("🧠 Routing to think model (Plan Mode detected)");
                 return Ok(RouteDecision {
                     model_name: think_model.clone(),
                     route_type: RouteType::Think,
+                    matched_prompt: None,
                 });
             }
         }
@@ -186,6 +192,7 @@ impl Router {
                 return Ok(RouteDecision {
                     model_name: background_model.clone(),
                     route_type: RouteType::Background,
+                    matched_prompt: None,
                 });
             }
         }
@@ -196,6 +203,7 @@ impl Router {
         Ok(RouteDecision {
             model_name: request.model.clone(),
             route_type: RouteType::Default,
+            matched_prompt: None,
         })
     }
 
@@ -234,8 +242,9 @@ impl Router {
     }
 
     /// Match prompt rules against the last user message content
-    /// Returns the model name if a rule matches, None otherwise
-    fn match_prompt_rule(&self, request: &AnthropicRequest) -> Option<String> {
+    /// Returns (model_name, matched_text) if a rule matches, None otherwise
+    /// Strips the matched phrase from the prompt if strip_match is true
+    fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<(String, String)> {
         if self.prompt_rules.is_empty() {
             return None;
         }
@@ -245,13 +254,22 @@ impl Router {
 
         // Check each rule in order (first match wins)
         for rule in &self.prompt_rules {
-            if rule.regex.is_match(&user_content) {
+            if let Some(matched) = rule.regex.find(&user_content) {
+                let matched_text = matched.as_str().to_string();
+
                 debug!(
-                    "📝 Prompt rule matched: pattern='{}' → model='{}'",
+                    "📝 Prompt rule matched: pattern='{}' → model='{}' (strip_match={})",
                     rule.regex.as_str(),
-                    rule.model
+                    rule.model,
+                    rule.strip_match
                 );
-                return Some(rule.model.clone());
+
+                // Strip the matched phrase from the last user message if requested
+                if rule.strip_match {
+                    self.strip_match_from_last_user_message(request, &rule.regex);
+                }
+
+                return Some((rule.model.clone(), matched_text));
             }
         }
 
@@ -275,7 +293,7 @@ impl Router {
                 let text: String = blocks
                     .iter()
                     .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.clone()),
+                        ContentBlock::Text { text, .. } => Some(text.clone()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
@@ -284,6 +302,40 @@ impl Router {
                     None
                 } else {
                     Some(text)
+                }
+            }
+        }
+    }
+
+    /// Strip the matched phrase from the last user message
+    fn strip_match_from_last_user_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
+        // Find the last user message (mutable)
+        let last_user = request
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == "user");
+
+        if let Some(msg) = last_user {
+            match &mut msg.content {
+                MessageContent::Text(text) => {
+                    let stripped = regex.replace_all(text, "").to_string();
+                    if stripped != *text {
+                        debug!("🔪 Stripped matched phrase from prompt");
+                        *text = stripped;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    // Strip from all text blocks
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::Text { text, .. } = block {
+                            let stripped = regex.replace_all(text, "").to_string();
+                            if stripped != *text {
+                                debug!("🔪 Stripped matched phrase from prompt block");
+                                *text = stripped;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -527,5 +579,71 @@ mod tests {
         let decision = router.route(&mut request).unwrap();
         assert_eq!(decision.route_type, RouteType::Default);
         assert_eq!(decision.model_name, "glm-4.6"); // Uses original model name (no auto-mapping)
+    }
+
+    #[test]
+    fn test_prompt_rule_matching() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: "(?i)commit.*changes".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("Please commit these changes");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+    }
+
+    #[test]
+    fn test_prompt_rule_strip_match() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[fast\]".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("[fast] Write a function to sort an array");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+
+        // Verify the matched phrase was stripped from the prompt
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert_eq!(text, " Write a function to sort an array");
+            assert!(!text.contains("[fast]"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[test]
+    fn test_prompt_rule_no_strip_match() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[fast\]".to_string(),
+            model: "fast-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("[fast] Write a function to sort an array");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "fast-model");
+
+        // Verify the matched phrase was NOT stripped (strip_match = false)
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert!(text.contains("[fast]"));
+        } else {
+            panic!("Expected text content");
+        }
     }
 }

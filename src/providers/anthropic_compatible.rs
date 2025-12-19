@@ -10,15 +10,23 @@ use secrecy::ExposeSecret;
 
 /// Check if a signature looks like it came from Anthropic.
 /// Anthropic signatures are long base64 strings (200+ chars).
-/// Other providers (MiniMax, OpenAI, etc.) use short hex strings (64 chars) or empty.
+/// Other providers (MiniMax, OpenAI, etc.) may use various signature formats.
 fn is_anthropic_signature(sig: &str) -> bool {
-    sig.len() > 100
+    // Anthropic signatures are very long base64 strings
+    // Be conservative: only treat very long signatures (>150 chars) as Anthropic
+    sig.len() > 150
 }
 
 /// Strip thinking blocks with incompatible signatures for the target provider.
 /// Different providers sign thinking blocks with their own keys.
-/// - When sending to Anthropic: keep only long base64 signatures (Anthropic's)
-/// - When sending to others: keep only short signatures (non-Anthropic)
+/// IMPORTANT: When switching between providers, we must be conservative and strip
+/// ALL signed thinking blocks to avoid signature validation errors.
+///
+/// Strategy:
+/// - For Anthropic native API: Keep only Anthropic signatures OR unsigned blocks
+/// - For other providers: Strip ALL signed blocks (Anthropic and non-Anthropic)
+///   to avoid any signature incompatibility issues
+///
 /// Also removes messages that become empty after stripping.
 fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthropic_target: bool) {
     let mut stripped_count = 0;
@@ -30,11 +38,34 @@ fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthrop
                 match block {
                     ContentBlock::Thinking { raw } => {
                         let sig = raw.get("signature").and_then(|v| v.as_str()).unwrap_or("");
-                        if is_anthropic_target {
-                            is_anthropic_signature(sig)
-                        } else {
-                            !is_anthropic_signature(sig)
+
+                        // Empty signature = unsigned block, always keep
+                        if sig.is_empty() {
+                            return true;
                         }
+
+                        let sig_len = sig.len();
+                        let is_anthropic_sig = is_anthropic_signature(sig);
+
+                        // For Anthropic native API: only keep Anthropic signatures
+                        let should_keep = if is_anthropic_target {
+                            is_anthropic_sig
+                        } else {
+                            // For non-Anthropic providers: strip ALL signed thinking blocks
+                            // This is conservative but safe - avoids signature validation errors
+                            false
+                        };
+
+                        if !should_keep {
+                            tracing::debug!(
+                                "🧹 Stripping thinking block: target={}, sig_len={}, is_anthropic_sig={}",
+                                if is_anthropic_target { "anthropic" } else { "non-anthropic" },
+                                sig_len,
+                                is_anthropic_sig
+                            );
+                        }
+
+                        should_keep
                     }
                     _ => true,
                 }
@@ -382,7 +413,7 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
                     blocks.iter()
                         .filter_map(|block| {
                             match block {
-                                crate::models::ContentBlock::Text { text } => Some(text.clone()),
+                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
                                 crate::models::ContentBlock::ToolResult { content, .. } => {
                                     Some(content.to_string())
                                 }
@@ -464,10 +495,12 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             });
         }
 
-        // Return the byte stream directly
-        let stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
+        // Wrap stream with logging to capture cache statistics
+        use crate::providers::streaming::LoggingSseStream;
+        let byte_stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
+        let logging_stream = LoggingSseStream::new(byte_stream, self.name.clone());
 
-        Ok(Box::pin(stream))
+        Ok(Box::pin(logging_stream))
     }
 
     fn supports_model(&self, model: &str) -> bool {
