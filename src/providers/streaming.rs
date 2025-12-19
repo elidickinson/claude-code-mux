@@ -3,6 +3,7 @@ use futures::stream::Stream;
 use pin_project::pin_project;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use serde_json::Value;
 
 /// SSE event from provider
 #[derive(Debug, Clone)]
@@ -147,6 +148,148 @@ where
                     return Poll::Ready(Some(Ok(event)));
                 }
 
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// Stream adapter that logs useful information from SSE events while passing through original bytes
+#[pin_project]
+pub struct LoggingSseStream<S> {
+    #[pin]
+    inner: S,
+    provider_name: String,
+    buffer: Vec<u8>,
+    logged_message_start: bool,
+    start_time: std::time::Instant,
+    first_token_time: Option<std::time::Instant>,
+    output_tokens: u64,
+    cache_creation: u64,
+    cache_read: u64,
+}
+
+impl<S> LoggingSseStream<S> {
+    pub fn new(stream: S, provider_name: String) -> Self {
+        Self {
+            inner: stream,
+            provider_name,
+            buffer: Vec::new(),
+            logged_message_start: false,
+            start_time: std::time::Instant::now(),
+            first_token_time: None,
+            output_tokens: 0,
+            cache_creation: 0,
+            cache_read: 0,
+        }
+    }
+}
+
+impl<S, E> Stream for LoggingSseStream<S>
+where
+    S: Stream<Item = Result<Bytes, E>>,
+{
+    type Item = Result<Bytes, E>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.as_mut().project().inner.poll_next(cx) {
+            Poll::Ready(Some(Ok(bytes))) => {
+                // Accumulate bytes for parsing and track events
+                let this = self.as_mut().project();
+                this.buffer.extend_from_slice(&bytes);
+
+                // Clone data we need for event processing
+                let buffer_clone = this.buffer.clone();
+                let provider_name = this.provider_name.clone();
+
+                // Parse events from accumulated buffer
+                if let Ok(text) = std::str::from_utf8(&buffer_clone) {
+                    if text.contains("\n\n") {
+                        let events = parse_sse_events(text);
+
+                        for event in events {
+                            match event.event.as_deref() {
+                                Some("message_start") if !*this.logged_message_start => {
+                                    // Extract cache stats
+                                    if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
+                                        if let Some(message) = json.get("message") {
+                                            if let Some(usage) = message.get("usage") {
+                                                *this.cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                *this.cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                            }
+                                        }
+                                    }
+                                    *this.logged_message_start = true;
+                                }
+                                Some("content_block_delta") => {
+                                    // Mark first token arrival
+                                    if this.first_token_time.is_none() {
+                                        *this.first_token_time = Some(std::time::Instant::now());
+                                    }
+                                }
+                                Some("message_delta") => {
+                                    // Track output tokens
+                                    if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
+                                        if let Some(usage) = json.get("usage") {
+                                            *this.output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                // Keep buffer from growing unbounded
+                let this = self.as_mut().project();
+                if this.buffer.len() > 1024 * 10 {
+                    this.buffer.clear();
+                }
+
+                // Pass through original bytes unchanged
+                Poll::Ready(Some(Ok(bytes)))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => {
+                // Stream ended - log final stats
+                let this = self.as_ref().project_ref();
+                let total_time = this.start_time.elapsed();
+                let ttft = this.first_token_time
+                    .map(|t| t.duration_since(*this.start_time))
+                    .unwrap_or(total_time);
+
+                let tok_per_sec = if total_time.as_secs_f64() > 0.0 && *this.output_tokens > 0 {
+                    *this.output_tokens as f64 / total_time.as_secs_f64()
+                } else {
+                    0.0
+                };
+
+                // Build cache info string if caching was used
+                let cache_info = if *this.cache_creation > 0 || *this.cache_read > 0 {
+                    let total_cached = *this.cache_creation + *this.cache_read;
+                    let cache_pct = if total_cached > 0 {
+                        (*this.cache_read * 100) / total_cached
+                    } else {
+                        0
+                    };
+                    format!(" cache:{}%", cache_pct)
+                } else {
+                    String::new()
+                };
+
+                tracing::info!(
+                    "📊 {} {}ms ttft:{}ms {:.1}t/s{}",
+                    this.provider_name,
+                    total_time.as_millis(),
+                    ttft.as_millis(),
+                    tok_per_sec,
+                    cache_info
+                );
+
+                // Clear buffer
+                self.as_mut().project().buffer.clear();
                 Poll::Ready(None)
             }
             Poll::Pending => Poll::Pending,

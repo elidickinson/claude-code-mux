@@ -101,7 +101,11 @@ pub enum ToolResultBlock {
 #[serde(tag = "type")]
 pub enum ContentBlock {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text { 
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<serde_json::Value>,
+    },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,
@@ -191,12 +195,14 @@ pub struct CountTokensResponse {
 pub struct RouteDecision {
     pub model_name: String,
     pub route_type: RouteType,
+    pub matched_prompt: Option<String>,
 }
 
 /// Type of routing decision
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouteType {
     WebSearch,
+    PromptRule,
     Think,
     Background,
     Default,
@@ -206,6 +212,7 @@ impl std::fmt::Display for RouteType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RouteType::WebSearch => write!(f, "web-search"),
+            RouteType::PromptRule => write!(f, "prompt-rule"),
             RouteType::Think => write!(f, "think"),
             RouteType::Background => write!(f, "background"),
             RouteType::Default => write!(f, "default"),

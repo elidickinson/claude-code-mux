@@ -321,6 +321,7 @@ impl OpenAIProvider {
                                                             "message" => {
                                                                 content_blocks.push(ContentBlock::Text {
                                                                     text: text.to_string(),
+                                                                    cache_control: None,
                                                                 });
                                                             }
                                                             _ => {}
@@ -382,7 +383,7 @@ impl OpenAIProvider {
                     let text = blocks.iter()
                         .filter_map(|block| {
                             match block {
-                                crate::models::ContentBlock::Text { text } => Some(text.clone()),
+                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
                                 _ => None,
                             }
                         })
@@ -718,7 +719,7 @@ impl OpenAIProvider {
                     let mut content_parts = Vec::new();
                     for block in blocks {
                         match block {
-                            crate::models::ContentBlock::Text { text } => {
+                            crate::models::ContentBlock::Text { text, .. } => {
                                 content_parts.push(OpenAIContentPart::Text {
                                     text: text.clone(),
                                 });
@@ -881,7 +882,10 @@ impl OpenAIProvider {
 
         // Add text content if present
         if !text.is_empty() {
-            content_blocks.push(ContentBlock::Text { text });
+            content_blocks.push(ContentBlock::Text { 
+                text,
+                cache_control: None,
+            });
         }
 
         // Non-streaming Tool Calls Transformation
@@ -928,6 +932,8 @@ impl OpenAIProvider {
             usage: Usage {
                 input_tokens: response.usage.prompt_tokens,
                 output_tokens: response.usage.completion_tokens,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
             },
         }
     }
@@ -952,6 +958,7 @@ impl OpenAIProvider {
             role: "assistant".to_string(),
             content: vec![ContentBlock::Text {
                 text,
+                cache_control: None,
             }],
             model: response.model,
             stop_reason: Some("end_turn".to_string()),
@@ -959,6 +966,8 @@ impl OpenAIProvider {
             usage: Usage {
                 input_tokens: response.usage.input_tokens,
                 output_tokens: response.usage.output_tokens,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
             },
         }
     }
@@ -1326,6 +1335,8 @@ impl AnthropicProvider for OpenAIProvider {
                 usage: Usage {
                     input_tokens: 0,  // SSE doesn't provide token counts
                     output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
                 },
             })
         } else {
@@ -1416,7 +1427,7 @@ impl AnthropicProvider for OpenAIProvider {
                     blocks.iter()
                         .filter_map(|block| {
                             match block {
-                                crate::models::ContentBlock::Text { text } => Some(text.clone()),
+                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
                                 crate::models::ContentBlock::ToolResult { content, .. } => {
                                     Some(content.to_string())
                                 }
