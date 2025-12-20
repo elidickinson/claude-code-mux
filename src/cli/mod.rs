@@ -92,6 +92,21 @@ pub struct RouterConfig {
     /// Regex pattern for detecting background tasks (e.g., "(?i)claude.*haiku").
     /// If empty/null, defaults to claude-haiku pattern.
     pub background_regex: Option<String>,
+    /// Prompt-based routing rules. Routes to specific models when patterns match user prompt.
+    #[serde(default)]
+    pub prompt_rules: Vec<PromptRule>,
+}
+
+/// Prompt-based routing rule
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PromptRule {
+    /// Regex pattern to match against user prompt content
+    pub pattern: String,
+    /// Model to route to when pattern matches
+    pub model: String,
+    /// Strip the matched phrase from the prompt (default: false)
+    #[serde(default)]
+    pub strip_match: bool,
 }
 
 /// Model configuration with 1:N provider mappings
@@ -112,6 +127,9 @@ pub struct ModelMapping {
     pub provider: String,
     /// Actual model name to use with the provider
     pub actual_model: String,
+    /// Inject continuation prompt after tool results (for models that stop prematurely)
+    #[serde(default)]
+    pub inject_continuation_prompt: bool,
 }
 
 impl ModelConfig {}
@@ -224,6 +242,13 @@ default = "placeholder-model"
 
 # Optional: Regex pattern for detecting background tasks (e.g., "(?i)claude.*haiku")
 # background_regex = ""
+
+# Optional: Prompt-based routing rules (first match wins)
+# Routes to specific models when patterns match user prompt content
+# [[router.prompt_rules]]
+# pattern = "(?i)commit.*changes"   # Regex pattern to match
+# model = "fast-model"              # Model to route to
+# strip_match = false               # Strip matched phrase from prompt (default: false)
 
 # Providers configuration
 # Add providers via the web UI or edit this section

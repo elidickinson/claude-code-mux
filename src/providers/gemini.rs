@@ -192,7 +192,7 @@ impl GeminiProvider {
                     let mut parts = Vec::new();
                     for block in blocks {
                         match block {
-                            ContentBlock::Text { text } => {
+                            ContentBlock::Text { text, .. } => {
                                 parts.push(GeminiPart::Text {
                                     text: text.clone(),
                                 });
@@ -322,9 +322,11 @@ impl GeminiProvider {
             .map(|part| match part {
                 GeminiPart::Text { text } => ContentBlock::Text {
                     text: text.clone(),
+                    cache_control: None,
                 },
                 _ => ContentBlock::Text {
                     text: String::new(),
+                    cache_control: None,
                 },
             })
             .collect();
@@ -346,6 +348,8 @@ impl GeminiProvider {
                 .as_ref()
                 .and_then(|u| u.candidates_token_count)
                 .unwrap_or(0) as u32,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
         };
 
         Ok(ProviderResponse {

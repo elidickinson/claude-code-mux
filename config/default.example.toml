@@ -60,6 +60,16 @@ default = "glm-4.6"
 think = "kimi-for-coding"
 websearch = "glm-4.6"
 
+# Prompt-based routing rules (first match wins)
+# Routes to specific models when patterns match user prompt content
+[[router.prompt_rules]]
+pattern = "(?i)(commit|push|merge|rebase).*change"
+model = "glm-4.5-air"
+
+[[router.prompt_rules]]
+pattern = "(?i)write.*test|add.*test"
+model = "kimi-for-coding"
+
 [server]
 host = "127.0.0.1"
 log_level = "info"

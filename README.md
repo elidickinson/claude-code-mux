@@ -428,27 +428,35 @@ Navigate to **Test** tab:
 - **Example**: Claude Code using web search tool
 - **Routes to**: `websearch` model (e.g., GLM-4.6)
 
-### 2. Background Tasks
+### 2. Background Tasks (Cost Optimization)
 - **Trigger**: ORIGINAL model name matches `background_regex` pattern
 - **Default Pattern**: `(?i)claude.*haiku` (case-insensitive)
 - **Example**: Request with `model="claude-4-5-haiku"` (checked BEFORE auto-mapping)
 - **Routes to**: `background` model (e.g., GLM-4.5-air)
 - **Configuration**: Set in Router or Settings tab
 
-> **Important**: Background detection uses the ORIGINAL model name, not the auto-mapped one. It's checked early to prevent expensive models from being used for background tasks.
+> **Important**: Background detection uses the ORIGINAL model name, not the auto-mapped one. It's checked early (priority 2) to prevent expensive models from being used for background tasks spawned by prompt rules or other routing.
 
 ### 3. Subagent Model
 - **Trigger**: System prompt contains `<CCM-SUBAGENT-MODEL>model-name</CCM-SUBAGENT-MODEL>` tag
 - **Example**: AI agent specifying model for sub-task
 - **Routes to**: Specified model (tag auto-removed)
 
-### 4. Think Mode
+### 4. Prompt Rules
+- **Trigger**: Last user message matches a configured prompt rule regex
+- **Example**: Message containing "[fast]" or "commit changes"
+- **Routes to**: Model specified in the matching rule
+- **Configuration**: Set in Router config with `prompt_rules` array
+- **Note**: Prompt rules are checked AFTER background detection to ensure background tasks use cheaper models
+
+### 5. Think Mode
 - **Trigger**: Request has `thinking` field with `type: "enabled"`
 - **Example**: Claude Code Plan Mode (`/plan`)
 - **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
 - **Note**: The `thinking` parameter is passed through to Anthropic providers, enabling extended reasoning. OpenAI-compatible providers don't support this parameter.
+- **GLM Models**: The proxy extracts and displays GLM's `reasoning` output but does not preserve `reasoning_details` for conversation continuation.
 
-### 5. Default (Fallback)
+### 6. Default (Fallback)
 - **Trigger**: No routing conditions matched
 - **Routes to**: Transformed model name (if auto-mapped) or original model name
 
@@ -742,6 +750,37 @@ provider = "openrouter"
 ```
 
 If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
+
+### Continuation Prompt Injection
+
+Some models (like GLM-4.6) stop prematurely after tool calls instead of continuing with multi-step tasks. The `inject_continuation_prompt` flag fixes this:
+
+```toml
+[[models]]
+name = "glm-4.6"
+
+[[models.mappings]]
+actual_model = "glm-4.6"
+priority = 1
+provider = "zai"
+inject_continuation_prompt = true  # Keeps the model working through tasks
+```
+
+**How it works:**
+- Detects when a model returns only tool results without any text response
+- Appends "Please continue if you're confident on the next step" to the existing user message
+- Does NOT create a new message (preserves strict user/assistant alternation)
+- The continuation prompt appears as part of the tool_result message content
+
+**When to use:**
+- Your model stops after each tool call, waiting for you to prompt "continue"
+- You're using multi-step workflows (like TodoWrite lists) and the model abandons tasks mid-execution
+- Common with certain OpenAI-compatible models via third-party providers
+
+**Related issues:**
+- [Claude Code #6159: Agent stops mid-task](https://github.com/anthropics/claude-code/issues/6159) - Known Claude Code agent reliability issue
+- [Claude Code #4766: Agent keeps stopping](https://github.com/anthropics/claude-code/issues/4766) - Requires manual "continue" prompts
+- [GLM-4.5 #100: API missing reasoning traces](https://github.com/zai-org/GLM-4.5/issues/100) - GLM reasoning disappears after tool calls
 
 ### Statusline Script for Claude Code
 

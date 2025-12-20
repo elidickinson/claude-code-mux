@@ -1605,6 +1605,24 @@
                             </select>
                         </div>
                     </form>
+
+                    <!-- Prompt Rules (read-only) -->
+                    <div class="card mt-6">
+                        <h2 class="text-xl font-bold mb-4">Prompt Rules</h2>
+                        <p class="text-gray-600 mb-4">
+                            Route to specific models when patterns match the prompt.
+                        </p>
+                        <div id="prompt-rules-list">
+                            <p class="text-gray-500 italic">No prompt rules configured</p>
+                        </div>
+                        <div class="mt-4 p-3 bg-gray-50 rounded text-sm text-gray-600">
+                            <p class="font-semibold mb-1">Add to config.toml:</p>
+                            <pre class="font-mono text-xs bg-gray-100 p-2 rounded overflow-x-auto">[[router.prompt_rules]]
+pattern = "(?i)commit.*change"  # regex or plain string
+model = "your-model-name"
+strip_match = false             # strip matched phrase (default: false)</pre>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Settings Tab -->
@@ -2227,6 +2245,35 @@
                     backgroundSelect.value = config.router.background || "";
                 if (websearchSelect)
                     websearchSelect.value = config.router.websearch || "";
+
+                // Display prompt rules (read-only)
+                const promptRulesList = document.getElementById("prompt-rules-list");
+                const promptRules = config.router.prompt_rules || [];
+
+                if (promptRules.length === 0) {
+                    promptRulesList.innerHTML = '<p class="text-gray-500 italic">No prompt rules configured</p>';
+                } else {
+                    promptRulesList.innerHTML = `
+                        <table class="w-full text-sm">
+                            <thead>
+                                <tr class="text-left text-gray-600 border-b">
+                                    <th class="pb-2 font-semibold">Pattern</th>
+                                    <th class="pb-2 font-semibold">Model</th>
+                                    <th class="pb-2 font-semibold">Strip Match</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${promptRules.map(rule => `
+                                    <tr class="border-b border-gray-100">
+                                        <td class="py-2 font-mono text-xs">${escapeHtml(rule.pattern)}</td>
+                                        <td class="py-2">${escapeHtml(rule.model)}</td>
+                                        <td class="py-2">${rule.strip_match ? '✓' : ''}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                }
             }
 
             function loadSettingsTab() {
