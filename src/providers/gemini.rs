@@ -1,4 +1,4 @@
-use super::{AnthropicProvider, ProviderError, ProviderResponse, Usage};
+use super::{AnthropicProvider, ProviderError, ProviderResponse, StreamResponse, Usage};
 use crate::auth::{OAuthClient, OAuthConfig, TokenStore};
 use crate::models::{AnthropicRequest, ContentBlock, MessageContent, SystemPrompt};
 use async_trait::async_trait;
@@ -606,7 +606,7 @@ impl AnthropicProvider for GeminiProvider {
     async fn send_message_stream(
         &self,
         request: AnthropicRequest,
-    ) -> Result<std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<bytes::Bytes, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<StreamResponse, ProviderError> {
         use futures::TryStreamExt;
 
         let model = request.model.clone();
@@ -688,7 +688,10 @@ impl AnthropicProvider for GeminiProvider {
             // Return the streaming response
             // The Gemini API returns SSE format, just pass through the stream
             let stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
-            Ok(Box::pin(stream))
+            Ok(StreamResponse {
+                stream: Box::pin(stream),
+                headers: HashMap::new(), // Gemini doesn't have rate limit headers to forward
+            })
         } else {
             // Use public Gemini API or Vertex AI streaming
             let gemini_request = self.transform_request(&request)?;
@@ -745,7 +748,10 @@ impl AnthropicProvider for GeminiProvider {
 
             // Return the streaming response
             let stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
-            Ok(Box::pin(stream))
+            Ok(StreamResponse {
+                stream: Box::pin(stream),
+                headers: HashMap::new(), // Gemini doesn't have rate limit headers to forward
+            })
         }
     }
 

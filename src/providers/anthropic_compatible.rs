@@ -1,12 +1,43 @@
-use super::{AnthropicProvider, ProviderResponse, error::ProviderError};
+use super::{AnthropicProvider, ProviderResponse, StreamResponse, error::ProviderError};
 use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock};
 use crate::auth::{TokenStore, OAuthClient, OAuthConfig};
 use async_trait::async_trait;
 use reqwest::Client;
 use std::pin::Pin;
+use std::collections::HashMap;
 use futures::stream::Stream;
 use bytes::Bytes;
 use secrecy::ExposeSecret;
+
+/// Headers to forward from Anthropic responses (rate limits, etc.)
+const ANTHROPIC_FORWARD_HEADERS: &[&str] = &[
+    "anthropic-ratelimit-requests-limit",
+    "anthropic-ratelimit-requests-remaining",
+    "anthropic-ratelimit-requests-reset",
+    "anthropic-ratelimit-tokens-limit",
+    "anthropic-ratelimit-tokens-remaining",
+    "anthropic-ratelimit-tokens-reset",
+    "anthropic-ratelimit-input-tokens-limit",
+    "anthropic-ratelimit-input-tokens-remaining",
+    "anthropic-ratelimit-input-tokens-reset",
+    "anthropic-ratelimit-output-tokens-limit",
+    "anthropic-ratelimit-output-tokens-remaining",
+    "anthropic-ratelimit-output-tokens-reset",
+    "retry-after",
+];
+
+/// Extract headers to forward from response
+fn extract_forward_headers(headers: &reqwest::header::HeaderMap) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    for header_name in ANTHROPIC_FORWARD_HEADERS {
+        if let Some(value) = headers.get(*header_name) {
+            if let Ok(v) = value.to_str() {
+                result.insert(header_name.to_string(), v.to_string());
+            }
+        }
+    }
+    result
+}
 
 /// Check if a signature looks like it came from Anthropic.
 /// Anthropic signatures are long base64 strings (200+ chars).
@@ -443,7 +474,7 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
     async fn send_message_stream(
         &self,
         request: AnthropicRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<StreamResponse, ProviderError> {
         use futures::stream::TryStreamExt;
 
         let url = format!("{}/v1/messages", self.base_url);
@@ -498,12 +529,23 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             });
         }
 
+        // Extract headers to forward (only for Anthropic backend)
+        let headers = if is_anthropic {
+            extract_forward_headers(response.headers())
+        } else {
+            HashMap::new()
+        };
+
         // Wrap stream with logging to capture cache statistics
         use crate::providers::streaming::LoggingSseStream;
         let byte_stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
         let logging_stream = LoggingSseStream::new(byte_stream, self.name.clone());
 
-        Ok(Box::pin(logging_stream))
+        // Return stream with headers for forwarding
+        Ok(StreamResponse {
+            stream: Box::pin(logging_stream),
+            headers,
+        })
     }
 
     fn supports_model(&self, model: &str) -> bool {

@@ -123,7 +123,14 @@ impl Router {
     }
 
     /// Route an incoming request to the appropriate model
-    /// Priority: websearch > subagent > prompt_rules > think > background > auto-map > default
+    ///
+    /// Priority order (highest to lowest):
+    /// 1. WebSearch - tool-based detection (web_search tool present)
+    /// 2. Background - model name regex match (e.g., haiku) - checked early to save costs
+    /// 3. Subagent - CCM-SUBAGENT-MODEL tag in system prompt
+    /// 4. Prompt Rules - regex pattern matching on user prompt (after background for cost savings)
+    /// 5. Think - Plan Mode / reasoning enabled
+    /// 6. Default - auto-mapped or original model name
     pub fn route(&self, request: &mut AnthropicRequest) -> Result<RouteDecision> {
         // Save original model for background task detection
         let original_model = request.model.clone();
@@ -150,7 +157,20 @@ impl Router {
             }
         }
 
-        // 2. Subagent Model (system prompt tag - explicit override)
+        // 2. Background tasks (check against ORIGINAL model name, before auto-mapping)
+        // Checked early to prevent expensive models being used for background tasks
+        if let Some(ref background_model) = self.config.router.background {
+            if self.is_background_task(&original_model) {
+                debug!("🔄 Routing to background model");
+                return Ok(RouteDecision {
+                    model_name: background_model.clone(),
+                    route_type: RouteType::Background,
+                    matched_prompt: None,
+                });
+            }
+        }
+
+        // 3. Subagent Model (system prompt tag)
         if let Some(model) = self.extract_subagent_model(request) {
             debug!(
                 "🤖 Routing to subagent model (CCM-SUBAGENT-MODEL tag): {}",
@@ -163,7 +183,8 @@ impl Router {
             });
         }
 
-        // 3. Prompt Rules (pattern matching on user prompt)
+        // 4. Prompt Rules (pattern matching on user prompt)
+        // NOTE: Checked AFTER background to ensure background tasks use cheaper models
         if let Some((model, matched_text)) = self.match_prompt_rule(request) {
             debug!("📝 Routing to model via prompt rule match: {}", model);
             return Ok(RouteDecision {
@@ -173,25 +194,13 @@ impl Router {
             });
         }
 
-        // 4. Think mode (Plan Mode / Reasoning)
+        // 5. Think mode (Plan Mode / Reasoning)
         if let Some(ref think_model) = self.config.router.think {
             if self.is_plan_mode(request) {
                 debug!("🧠 Routing to think model (Plan Mode detected)");
                 return Ok(RouteDecision {
                     model_name: think_model.clone(),
                     route_type: RouteType::Think,
-                    matched_prompt: None,
-                });
-            }
-        }
-
-        // 5. Background tasks (check against ORIGINAL model name, before auto-mapping)
-        if let Some(ref background_model) = self.config.router.background {
-            if self.is_background_task(&original_model) {
-                debug!("🔄 Routing to background model");
-                return Ok(RouteDecision {
-                    model_name: background_model.clone(),
-                    route_type: RouteType::Background,
                     matched_prompt: None,
                 });
             }
