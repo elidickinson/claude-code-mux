@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use bytes::Bytes;
 use futures::stream::Stream;
 use std::pin::Pin;
+use std::collections::HashMap;
 
 /// Provider response that maintains Anthropic API compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +33,14 @@ pub struct Usage {
     pub output_tokens: u32,
 }
 
+/// Response from streaming request, includes headers for passthrough
+pub struct StreamResponse {
+    /// The byte stream (SSE format)
+    pub stream: Pin<Box<dyn Stream<Item = Result<Bytes, ProviderError>> + Send>>,
+    /// Headers to forward (e.g., Anthropic rate limit headers)
+    pub headers: HashMap<String, String>,
+}
+
 /// Main provider trait - all providers must implement this
 /// Maintains Anthropic Messages API compatibility
 #[async_trait]
@@ -41,11 +50,11 @@ pub trait AnthropicProvider: Send + Sync {
     async fn send_message(&self, request: AnthropicRequest) -> Result<ProviderResponse, ProviderError>;
 
     /// Send a streaming message request to the provider
-    /// Returns a stream of raw bytes (SSE format)
+    /// Returns a stream of raw bytes (SSE format) along with headers to forward
     async fn send_message_stream(
         &self,
         request: AnthropicRequest
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, ProviderError>> + Send>>, ProviderError>;
+    ) -> Result<StreamResponse, ProviderError>;
 
     /// Count tokens for a request
     /// Provider-specific implementation (tiktoken for OpenAI, etc.)

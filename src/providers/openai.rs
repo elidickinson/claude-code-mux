@@ -1,10 +1,11 @@
-use super::{AnthropicProvider, ProviderResponse, ContentBlock, Usage, error::ProviderError};
+use super::{AnthropicProvider, ProviderResponse, StreamResponse, ContentBlock, Usage, error::ProviderError};
 use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent};
 use crate::auth::{OAuthClient, OAuthConfig, TokenStore};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use reqwest::Client;
 use std::pin::Pin;
+use std::collections::HashMap;
 use futures::stream::Stream;
 use bytes::Bytes;
 use base64::{Engine as _, engine::general_purpose};
@@ -1443,7 +1444,7 @@ impl AnthropicProvider for OpenAIProvider {
     async fn send_message_stream(
         &self,
         request: AnthropicRequest,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, ProviderError>> + Send>>, ProviderError> {
+    ) -> Result<StreamResponse, ProviderError> {
         use futures::stream::TryStreamExt;
 
         // Get authentication token (API key or OAuth)
@@ -1651,7 +1652,10 @@ impl AnthropicProvider for OpenAIProvider {
         }))
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
-        Ok(Box::pin(finalized_stream))
+        Ok(StreamResponse {
+            stream: Box::pin(finalized_stream),
+            headers: HashMap::new(), // OpenAI doesn't have rate limit headers to forward
+        })
     }
 
     fn supports_model(&self, model: &str) -> bool {

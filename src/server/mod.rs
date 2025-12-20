@@ -767,7 +767,7 @@ async fn handle_messages(
                     info!("🌊 Streaming request to provider: {}", mapping.provider);
 
                     match provider.send_message_stream(anthropic_request).await {
-                        Ok(stream) => {
+                        Ok(stream_response) => {
                             info!("✅ Streaming request started with provider: {}", mapping.provider);
 
                             // Write routing info for statusline
@@ -776,19 +776,24 @@ async fn handle_messages(
                             // Convert provider stream to HTTP response
                             // The provider already returns properly formatted SSE bytes (event: + data: lines)
                             // We pass them through as-is without wrapping
-                            let body_stream = stream.map_err(|e| {
+                            let body_stream = stream_response.stream.map_err(|e| {
                                 error!("Stream error: {}", e);
                                 std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
                             });
 
                             let body = Body::from_stream(body_stream);
-                            let response = Response::builder()
+                            let mut response_builder = Response::builder()
                                 .status(200)
                                 .header("Content-Type", "text/event-stream")
                                 .header("Cache-Control", "no-cache")
-                                .header("Connection", "keep-alive")
-                                .body(body)
-                                .unwrap();
+                                .header("Connection", "keep-alive");
+
+                            // Forward Anthropic rate limit headers
+                            for (name, value) in stream_response.headers {
+                                response_builder = response_builder.header(name, value);
+                            }
+
+                            let response = response_builder.body(body).unwrap();
 
                             return Ok(response);
                         }

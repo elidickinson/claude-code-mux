@@ -412,7 +412,7 @@ Navigate to **Test** tab:
 
 ## Routing Logic
 
-**Flow**: Auto-map (transform) → WebSearch > Subagent > Think > Background > Default
+**Flow**: Auto-map (transform) → WebSearch > Background > Subagent > Think > Default
 
 ### 0. Auto-mapping (Model Name Transformation)
 - **Trigger**: Model name matches `auto_map_regex` pattern
@@ -428,25 +428,25 @@ Navigate to **Test** tab:
 - **Example**: Claude Code using web search tool
 - **Routes to**: `websearch` model (e.g., GLM-4.6)
 
-### 2. Subagent Model
-- **Trigger**: System prompt contains `<CCM-SUBAGENT-MODEL>model-name</CCM-SUBAGENT-MODEL>` tag
-- **Example**: AI agent specifying model for sub-task
-- **Routes to**: Specified model (tag auto-removed)
-
-### 3. Think Mode
-- **Trigger**: Request has `thinking` field with `type: "enabled"`
-- **Example**: Claude Code Plan Mode (`/plan`)
-- **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
-- **Note**: The `thinking` parameter is passed through to Anthropic providers, enabling extended reasoning. OpenAI-compatible providers don't support this parameter.
-
-### 4. Background Tasks
+### 2. Background Tasks
 - **Trigger**: ORIGINAL model name matches `background_regex` pattern
 - **Default Pattern**: `(?i)claude.*haiku` (case-insensitive)
 - **Example**: Request with `model="claude-4-5-haiku"` (checked BEFORE auto-mapping)
 - **Routes to**: `background` model (e.g., GLM-4.5-air)
 - **Configuration**: Set in Router or Settings tab
 
-> **Important**: Background detection uses the ORIGINAL model name, not the auto-mapped one.
+> **Important**: Background detection uses the ORIGINAL model name, not the auto-mapped one. It's checked early to prevent expensive models from being used for background tasks.
+
+### 3. Subagent Model
+- **Trigger**: System prompt contains `<CCM-SUBAGENT-MODEL>model-name</CCM-SUBAGENT-MODEL>` tag
+- **Example**: AI agent specifying model for sub-task
+- **Routes to**: Specified model (tag auto-removed)
+
+### 4. Think Mode
+- **Trigger**: Request has `thinking` field with `type: "enabled"`
+- **Example**: Claude Code Plan Mode (`/plan`)
+- **Routes to**: `think` model (e.g., Kimi K2 Thinking, Claude Opus)
+- **Note**: The `thinking` parameter is passed through to Anthropic providers, enabling extended reasoning. OpenAI-compatible providers don't support this parameter.
 
 ### 5. Default (Fallback)
 - **Trigger**: No routing conditions matched
@@ -473,8 +473,7 @@ Config: auto_map_regex="^claude-", background_regex="(?i)claude.*haiku", backgro
 Flow:
 1. Auto-map: "claude-4-5-haiku" → "minimax-m2" (transformed)
 2. WebSearch check: No web_search tool
-3. Think check: No thinking field
-4. Background check on ORIGINAL: "claude-4-5-haiku" matches "(?i)claude.*haiku" → Route to "glm-4.5-air"
+3. Background check on ORIGINAL: "claude-4-5-haiku" matches "(?i)claude.*haiku" → Route to "glm-4.5-air"
 Result: glm-4.5-air (background model)
 ```
 
@@ -486,7 +485,8 @@ Config: auto_map_regex="^claude-", think="kimi-k2-thinking"
 Flow:
 1. Auto-map: "claude-3-5-sonnet" → "minimax-m2" (transformed)
 2. WebSearch check: No web_search tool
-3. Think check: thinking.type="enabled" → Route to "kimi-k2-thinking"
+3. Background check: "claude-4-5-sonnet" doesn't match background regex
+4. Think check: thinking.type="enabled" → Route to "kimi-k2-thinking"
 Result: kimi-k2-thinking (think model)
 ```
 
@@ -498,8 +498,8 @@ Config: auto_map_regex="^claude-", default="minimax-m2"
 Flow:
 1. Auto-map: "glm-4.6" doesn't match "^claude-" → No transformation
 2. WebSearch check: No web_search tool
-3. Think check: No thinking field
-4. Background check: "glm-4.6" doesn't match background regex
+3. Background check: "glm-4.6" doesn't match background regex
+4. Think check: No thinking field
 5. Default: Use model name as-is
 Result: glm-4.6 (original model name, routed through model mappings)
 ```

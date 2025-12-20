@@ -86,7 +86,13 @@ impl Router {
     }
 
     /// Route an incoming request to the appropriate model
-    /// Priority: websearch > subagent > think > background > auto-map > default
+    ///
+    /// Priority order (highest to lowest):
+    /// 1. WebSearch - tool-based detection (web_search tool present)
+    /// 2. Background - model name regex match (e.g., haiku) - checked early to save costs
+    /// 3. Subagent - CCM-SUBAGENT-MODEL tag in system prompt
+    /// 4. Think - Plan Mode / reasoning enabled
+    /// 5. Default - auto-mapped or original model name
     pub fn route(&self, request: &mut AnthropicRequest) -> Result<RouteDecision> {
         // Save original model for background task detection
         let original_model = request.model.clone();
@@ -112,7 +118,19 @@ impl Router {
             }
         }
 
-        // 2. Subagent Model (system prompt tag)
+        // 2. Background tasks (check against ORIGINAL model name, before auto-mapping)
+        // Checked early to prevent expensive models being used for background tasks
+        if let Some(ref background_model) = self.config.router.background {
+            if self.is_background_task(&original_model) {
+                debug!("🔄 Routing to background model");
+                return Ok(RouteDecision {
+                    model_name: background_model.clone(),
+                    route_type: RouteType::Background,
+                });
+            }
+        }
+
+        // 3. Subagent Model (system prompt tag)
         if let Some(model) = self.extract_subagent_model(request) {
             info!(
                 "🤖 Routing to subagent model (CCM-SUBAGENT-MODEL tag): {}",
@@ -124,24 +142,13 @@ impl Router {
             });
         }
 
-        // 3. Think mode (Plan Mode / Reasoning)
+        // 4. Think mode (Plan Mode / Reasoning)
         if let Some(ref think_model) = self.config.router.think {
             if self.is_plan_mode(request) {
                 info!("🧠 Routing to think model (Plan Mode detected)");
                 return Ok(RouteDecision {
                     model_name: think_model.clone(),
                     route_type: RouteType::Think,
-                });
-            }
-        }
-
-        // 4. Background tasks (check against ORIGINAL model name, before auto-mapping)
-        if let Some(ref background_model) = self.config.router.background {
-            if self.is_background_task(&original_model) {
-                debug!("🔄 Routing to background model");
-                return Ok(RouteDecision {
-                    model_name: background_model.clone(),
-                    route_type: RouteType::Background,
                 });
             }
         }
