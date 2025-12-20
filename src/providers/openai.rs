@@ -52,6 +52,7 @@ struct OpenAIResponsesRequest {
 /// Input for Responses API can be string or array of messages
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
+#[allow(dead_code)]
 enum OpenAIResponsesInput {
     Text(String),
     Messages(Vec<OpenAIResponsesMessage>),
@@ -152,6 +153,7 @@ struct OpenAIChoice {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAIUsage {
     prompt_tokens: u32,
     completion_tokens: u32,
@@ -161,6 +163,7 @@ struct OpenAIUsage {
 
 /// OpenAI Responses API response format (for Codex models)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAIResponsesResponse {
     id: String,
     model: String,
@@ -169,6 +172,7 @@ struct OpenAIResponsesResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ResponsesOutput {
     #[serde(rename = "type")]
     output_type: String,
@@ -177,6 +181,7 @@ struct ResponsesOutput {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ResponsesContentBlock {
     #[serde(rename = "type")]
     block_type: String,
@@ -185,6 +190,7 @@ struct ResponsesContentBlock {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ResponsesUsage {
     input_tokens: u32,
     output_tokens: u32,
@@ -192,6 +198,7 @@ struct ResponsesUsage {
 
 /// OpenAI Streaming Chunk (for SSE transformation)
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAIStreamChunk {
     id: String,
     #[serde(default)]
@@ -202,6 +209,7 @@ struct OpenAIStreamChunk {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAIStreamChoice {
     delta: OpenAIStreamDelta,
     #[serde(default)]
@@ -211,6 +219,7 @@ struct OpenAIStreamChoice {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OpenAIStreamDelta {
     #[serde(default)]
     content: Option<String>,
@@ -939,6 +948,7 @@ impl OpenAIProvider {
     }
 
     /// Transform Responses API response to Anthropic format
+    #[allow(dead_code)]
     fn transform_responses_response(&self, response: OpenAIResponsesResponse) -> ProviderResponse {
         // Extract text from output messages
         let text = response.output.iter()

@@ -263,6 +263,7 @@ pub async fn oauth_refresh_token(
 
 /// OAuth callback query parameters
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct OAuthCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,

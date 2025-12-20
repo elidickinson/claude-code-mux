@@ -23,6 +23,7 @@ impl ProviderRegistry {
     }
 
     /// Load providers from configuration
+    #[allow(dead_code)]
     pub fn from_configs(configs: &[ProviderConfig], token_store: Option<TokenStore>) -> Result<Self, ProviderError> {
         Self::from_configs_with_models(configs, token_store, &[])
     }

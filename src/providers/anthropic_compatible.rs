@@ -128,6 +128,7 @@ impl AnthropicCompatibleProvider {
     }
 
     /// Create with custom headers
+    #[allow(dead_code)]
     pub fn with_headers(
         name: String,
         api_key: String,
@@ -203,6 +204,7 @@ impl AnthropicCompatibleProvider {
     }
 
     /// Create Anthropic Native provider
+    #[allow(dead_code)]
     pub fn anthropic(api_key: String, models: Vec<String>) -> Self {
         Self::new(
             "anthropic".to_string(),
@@ -215,6 +217,7 @@ impl AnthropicCompatibleProvider {
     }
 
     /// Create OpenRouter provider
+    #[allow(dead_code)]
     pub fn openrouter(api_key: String, models: Vec<String>) -> Self {
         Self::with_headers(
             "openrouter".to_string(),

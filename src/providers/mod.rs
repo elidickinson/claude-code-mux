@@ -113,6 +113,7 @@ impl ProviderConfig {
     }
 
     /// Get the API key or OAuth provider ID
+    #[allow(dead_code)]
     pub fn get_auth_credential(&self) -> Option<String> {
         match self.auth_type {
             AuthType::ApiKey => self.api_key.clone(),

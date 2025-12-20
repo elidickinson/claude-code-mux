@@ -14,6 +14,7 @@ pub struct SseEvent {
 
 impl SseEvent {
     /// Format as SSE output for client
+    #[allow(dead_code)]
     pub fn to_sse_string(&self) -> String {
         let mut output = String::new();
 
@@ -201,7 +202,6 @@ where
 
                 // Clone data we need for event processing
                 let buffer_clone = this.buffer.clone();
-                let provider_name = this.provider_name.clone();
 
                 // Parse events from accumulated buffer
                 if let Ok(text) = std::str::from_utf8(&buffer_clone) {
@@ -280,11 +280,12 @@ where
                 };
 
                 tracing::info!(
-                    "📊 {} {}ms ttft:{}ms {:.1}t/s{}",
+                    "📊 {} {}ms ttft:{}ms {:.1}t/s {} tokens{}",
                     this.provider_name,
                     total_time.as_millis(),
                     ttft.as_millis(),
                     tok_per_sec,
+                    *this.output_tokens,
                     cache_info
                 );
 

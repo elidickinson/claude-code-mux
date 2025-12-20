@@ -522,6 +522,7 @@ impl OAuthClient {
     }
 
     /// Get a valid access token (refreshing if needed)
+    #[allow(dead_code)]
     pub async fn get_valid_token(&self, provider_id: &str) -> Result<String> {
         let token = self.token_store.get(provider_id)
             .context("No token found for provider")?;
@@ -535,6 +536,7 @@ impl OAuthClient {
     }
 
     /// Create an API key using OAuth token (for Anthropic Console flow)
+    #[allow(dead_code)]
     pub async fn create_api_key(&self, provider_id: &str) -> Result<String> {
         let access_token = self.get_valid_token(provider_id).await?;
 

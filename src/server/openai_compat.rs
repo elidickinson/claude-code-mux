@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use crate::models::{AnthropicRequest, MessageContent, ContentBlock, SystemPrompt};
 use crate::providers::ProviderResponse;
 
+#[allow(dead_code)]
+
 /// OpenAI Chat Completions request format
 #[derive(Debug, Deserialize)]
 pub struct OpenAIRequest {
@@ -29,7 +31,7 @@ pub struct OpenAIMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<OpenAIContent>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub _name: Option<String>,
 }
 
 /// Content can be string or array of content parts

@@ -12,6 +12,7 @@ use secrecy::ExposeSecret;
 /// 2. API Key (Google AI Studio) - Uses public Gemini API
 /// 3. Vertex AI (Google Cloud) - Uses Vertex AI API
 pub struct GeminiProvider {
+    #[allow(dead_code)]
     pub name: String,
     pub api_key: Option<String>,
     pub base_url: String,
@@ -869,6 +870,7 @@ struct GeminiCandidate {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct GeminiUsageMetadata {
     prompt_token_count: Option<i32>,
     candidates_token_count: Option<i32>,
@@ -903,6 +905,7 @@ struct CodeAssistInnerRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct CodeAssistResponse {
     response: GeminiResponse,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -917,6 +920,7 @@ struct GeminiErrorResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct GeminiError {
     code: u16,
     message: String,

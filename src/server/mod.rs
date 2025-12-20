@@ -598,7 +598,7 @@ async fn handle_openai_chat_completions(
                 };
 
                 info!(
-                    "[{:<25}:sync] {:<35} → {}/{}{}",
+                    "[{:<15}:sync] {:<25} → {}/{}{}",
                     route_type_display,
                     model,
                     mapping.provider,
@@ -860,7 +860,7 @@ async fn handle_messages(
                 };
 
                 info!(
-                    "[{:<25}:{}] {:<35} → {}/{}{}",
+                    "[{:<15}:{}] {:<25} → {}/{}{}",
                     route_type_display,
                     stream_mode,
                     model,
