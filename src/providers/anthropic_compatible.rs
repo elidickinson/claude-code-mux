@@ -3,10 +3,7 @@ use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, M
 use crate::auth::{TokenStore, OAuthClient, OAuthConfig};
 use async_trait::async_trait;
 use reqwest::Client;
-use std::pin::Pin;
 use std::collections::HashMap;
-use futures::stream::Stream;
-use bytes::Bytes;
 use secrecy::ExposeSecret;
 
 /// Headers to forward from Anthropic responses (rate limits, etc.)
