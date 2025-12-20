@@ -2,7 +2,7 @@ mod openai_compat;
 mod oauth_handlers;
 
 use crate::cli::AppConfig;
-use crate::models::{AnthropicRequest, Message, MessageContent};
+use crate::models::AnthropicRequest;
 use crate::router::Router;
 use crate::providers::ProviderRegistry;
 use crate::auth::TokenStore;
@@ -18,7 +18,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use futures::stream::TryStreamExt;
 use chrono::Local;
 
@@ -981,7 +981,7 @@ async fn handle_count_tokens(
     Json(request_json): Json<serde_json::Value>,
 ) -> Result<Response, AppError> {
     let model = request_json.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
-    info!("Received count_tokens request for model: {}", model);
+    debug!("Received count_tokens request for model: {}", model);
 
     // 1. Parse as CountTokensRequest first
     use crate::models::CountTokensRequest;
@@ -1008,14 +1008,14 @@ async fn handle_count_tokens(
         .route(&mut routing_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
-    info!(
+    debug!(
         "🧮 Routed count_tokens: {} → {} ({})",
         model, decision.model_name, decision.route_type
     );
 
     // 3. Try model mappings with fallback (1:N mapping)
     if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
-        info!("📋 Found {} provider mappings for token counting: {}", model_config.mappings.len(), decision.model_name);
+        debug!("📋 Found {} provider mappings for token counting: {}", model_config.mappings.len(), decision.model_name);
 
         // Sort mappings by priority
         let mut sorted_mappings = model_config.mappings.clone();
@@ -1023,7 +1023,7 @@ async fn handle_count_tokens(
 
         // Try each mapping in priority order
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            info!(
+            debug!(
                 "🔄 Trying token count mapping {}/{}: provider={}, actual_model={}",
                 idx + 1,
                 sorted_mappings.len(),
@@ -1042,16 +1042,16 @@ async fn handle_count_tokens(
                 // Call provider's count_tokens
                 match provider.count_tokens(count_request_for_provider).await {
                     Ok(response) => {
-                        info!("✅ Token count succeeded with provider: {}", mapping.provider);
+                        debug!("✅ Token count succeeded with provider: {}", mapping.provider);
                         return Ok(Json(response).into_response());
                     }
                     Err(e) => {
-                        info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
+                        debug!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
                         continue;
                     }
                 }
             } else {
-                info!("⚠️ Provider {} not found in registry, trying next fallback", mapping.provider);
+                debug!("⚠️ Provider {} not found in registry, trying next fallback", mapping.provider);
                 continue;
             }
         }
@@ -1065,7 +1065,7 @@ async fn handle_count_tokens(
     } else {
         // No model mapping found, try direct provider registry lookup (backward compatibility)
         if let Ok(provider) = state.provider_registry.get_provider_for_model(&decision.model_name) {
-            info!("📦 Using provider from registry (direct lookup) for token counting: {}", decision.model_name);
+            debug!("📦 Using provider from registry (direct lookup) for token counting: {}", decision.model_name);
 
             // Update model to routed model
             let mut count_request_for_provider = count_request.clone();
@@ -1076,7 +1076,7 @@ async fn handle_count_tokens(
                 .await
                 .map_err(|e| AppError::ProviderError(e.to_string()))?;
 
-            info!("✅ Token count completed via provider");
+            debug!("✅ Token count completed via provider");
             return Ok(Json(response).into_response());
         }
 
