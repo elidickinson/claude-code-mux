@@ -167,6 +167,7 @@ pub struct LoggingSseStream<S> {
     start_time: std::time::Instant,
     first_token_time: Option<std::time::Instant>,
     output_tokens: u64,
+    input_tokens: u64,
     cache_creation: u64,
     cache_read: u64,
 }
@@ -181,6 +182,7 @@ impl<S> LoggingSseStream<S> {
             start_time: std::time::Instant::now(),
             first_token_time: None,
             output_tokens: 0,
+            input_tokens: 0,
             cache_creation: 0,
             cache_read: 0,
         }
@@ -215,6 +217,7 @@ where
                                     if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
                                         if let Some(message) = json.get("message") {
                                             if let Some(usage) = message.get("usage") {
+                                                *this.input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                                 *this.cache_creation = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                                 *this.cache_read = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                             }
@@ -268,9 +271,9 @@ where
 
                 // Build cache info string if caching was used
                 let cache_info = if *this.cache_creation > 0 || *this.cache_read > 0 {
-                    let total_cached = *this.cache_creation + *this.cache_read;
-                    let cache_pct = if total_cached > 0 {
-                        (*this.cache_read * 100) / total_cached
+                    let total_input = *this.input_tokens + *this.cache_creation + *this.cache_read;
+                    let cache_pct = if total_input > 0 {
+                        (*this.cache_read * 100) / total_input
                     } else {
                         0
                     };
