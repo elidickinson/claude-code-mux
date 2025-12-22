@@ -687,25 +687,15 @@ async fn handle_openai_chat_completions(
 /// (indicates model should continue after tool execution)
 fn should_inject_continuation(msg: &crate::models::Message) -> bool {
     use crate::models::MessageContent;
-    use crate::models::ContentBlock;
-
     let has_tool_results = match &msg.content {
-        MessageContent::Blocks(blocks) => {
-            blocks.iter().any(|b| matches!(b, ContentBlock::ToolResult { .. }))
-        }
+        MessageContent::Blocks(blocks) => blocks.iter().any(|b| b.is_tool_result()),
         _ => false,
     };
 
     let has_text = match &msg.content {
         MessageContent::Text(text) => !text.trim().is_empty(),
         MessageContent::Blocks(blocks) => {
-            blocks.iter().any(|b| {
-                if let ContentBlock::Text { text, .. } = b {
-                    !text.trim().is_empty()
-                } else {
-                    false
-                }
-            })
+            blocks.iter().any(|b| b.as_text().map(|t| !t.trim().is_empty()).unwrap_or(false))
         }
     };
 
@@ -718,27 +708,20 @@ fn should_inject_continuation(msg: &crate::models::Message) -> bool {
 fn inject_continuation_text(msg: &mut crate::models::Message) {
     use crate::models::{MessageContent, ContentBlock};
 
+    let continuation = "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.";
+
     match &mut msg.content {
         MessageContent::Text(text) => {
             // Convert to Blocks and append continuation
             let original_text = text.clone();
             msg.content = MessageContent::Blocks(vec![
-                ContentBlock::Text {
-                    text: original_text,
-                    cache_control: None,
-                },
-                ContentBlock::Text {
-                    text: "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string(),
-                    cache_control: None,
-                },
+                ContentBlock::text(original_text, None),
+                ContentBlock::text(continuation.to_string(), None),
             ]);
         }
         MessageContent::Blocks(blocks) => {
             // Append continuation text to existing blocks
-            blocks.push(ContentBlock::Text {
-                text: "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.".to_string(),
-                cache_control: None,
-            });
+            blocks.push(ContentBlock::text(continuation.to_string(), None));
         }
     }
 }
@@ -763,7 +746,12 @@ async fn handle_messages(
     // 1. Parse request for routing decision (mutable for tag extraction)
     let mut request_for_routing: AnthropicRequest = serde_json::from_value(request_json.clone())
         .map_err(|e| {
-            tracing::error!("❌ Failed to parse request: {}", e);
+            // Log the full request on parse failure for debugging
+            if let Ok(pretty) = serde_json::to_string_pretty(&request_json) {
+                tracing::error!("❌ Failed to parse request: {}\n📋 Request body:\n{}", e, pretty);
+            } else {
+                tracing::error!("❌ Failed to parse request: {}", e);
+            }
             AppError::ParseError(format!("Invalid request format: {}", e))
         })?;
 

@@ -6,7 +6,7 @@ pub mod registry;
 pub mod streaming;
 
 use async_trait::async_trait;
-use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, ContentBlock};
+use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, ContentBlock, KnownContentBlock};
 use error::ProviderError;
 use serde::{Deserialize, Serialize};
 use bytes::Bytes;

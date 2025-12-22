@@ -1,5 +1,5 @@
 use super::{AnthropicProvider, ProviderResponse, StreamResponse, error::ProviderError};
-use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock};
+use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock, KnownContentBlock, ThinkingConfig};
 use crate::auth::{TokenStore, OAuthClient, OAuthConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -36,27 +36,12 @@ fn extract_forward_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Stri
     result
 }
 
-/// Check if a signature looks like it came from Anthropic.
-/// Anthropic signatures are long base64 strings (200+ chars).
-/// Other providers (MiniMax, OpenAI, etc.) may use various signature formats.
-fn is_anthropic_signature(sig: &str) -> bool {
-    // Anthropic signatures are very long base64 strings
-    // Be conservative: only treat very long signatures (>150 chars) as Anthropic
-    sig.len() > 150
-}
-
-/// Strip thinking blocks with incompatible signatures for the target provider.
-/// Different providers sign thinking blocks with their own keys.
-/// IMPORTANT: When switching between providers, we must be conservative and strip
-/// ALL signed thinking blocks to avoid signature validation errors.
-///
-/// Strategy:
-/// - For Anthropic native API: Keep only Anthropic signatures OR unsigned blocks
-/// - For other providers: Strip ALL signed blocks (Anthropic and non-Anthropic)
-///   to avoid any signature incompatibility issues
-///
-/// Also removes messages that become empty after stripping.
-fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthropic_target: bool) {
+/// Strip thinking blocks with signatures and disable thinking mode.
+/// We cannot verify which provider signed a thinking block, so we strip ALL
+/// signed blocks to avoid signature validation errors when switching providers.
+/// Also disables thinking since Anthropic requires thinking blocks in assistant
+/// messages when thinking is enabled.
+fn strip_signed_thinking_blocks(request: &mut AnthropicRequest) {
     let mut stripped_count = 0;
 
     for message in &mut request.messages {
@@ -64,36 +49,17 @@ fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthrop
             let before_len = blocks.len();
             blocks.retain(|block| {
                 match block {
-                    ContentBlock::Thinking { raw } => {
+                    ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
                         let sig = raw.get("signature").and_then(|v| v.as_str()).unwrap_or("");
 
-                        // Empty signature = unsigned block, always keep
+                        // Empty signature = unsigned block, keep it
                         if sig.is_empty() {
                             return true;
                         }
 
-                        let sig_len = sig.len();
-                        let is_anthropic_sig = is_anthropic_signature(sig);
-
-                        // For Anthropic native API: only keep Anthropic signatures
-                        let should_keep = if is_anthropic_target {
-                            is_anthropic_sig
-                        } else {
-                            // For non-Anthropic providers: strip ALL signed thinking blocks
-                            // This is conservative but safe - avoids signature validation errors
-                            false
-                        };
-
-                        if !should_keep {
-                            tracing::debug!(
-                                "🧹 Stripping thinking block: target={}, sig_len={}, is_anthropic_sig={}",
-                                if is_anthropic_target { "anthropic" } else { "non-anthropic" },
-                                sig_len,
-                                is_anthropic_sig
-                            );
-                        }
-
-                        should_keep
+                        // Strip all signed thinking blocks - we can't verify signatures
+                        tracing::debug!("🧹 Stripping signed thinking block (sig_len={})", sig.len());
+                        false
                     }
                     _ => true,
                 }
@@ -102,7 +68,7 @@ fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthrop
         }
     }
 
-    // Remove messages that became empty (except final assistant message which can be empty)
+    // Remove messages that became empty
     let len = request.messages.len();
     request.messages.retain(|msg| {
         match &msg.content {
@@ -112,9 +78,73 @@ fn strip_incompatible_thinking_blocks(request: &mut AnthropicRequest, is_anthrop
     });
     let removed_msgs = len - request.messages.len();
 
-    if stripped_count > 0 || removed_msgs > 0 {
-        tracing::debug!("🧹 Stripped {} thinking blocks, removed {} empty messages", stripped_count, removed_msgs);
+    // Disable thinking since we stripped thinking blocks
+    if stripped_count > 0 {
+        request.thinking = Some(ThinkingConfig {
+            r#type: "disabled".to_string(),
+            budget_tokens: None,
+        });
+        tracing::info!("🧹 Stripped {} thinking blocks, disabled thinking mode", stripped_count);
     }
+
+    if removed_msgs > 0 {
+        tracing::debug!("🧹 Removed {} empty messages", removed_msgs);
+    }
+}
+
+/// Sanitize tool_use.id and tool_use_id fields to match Anthropic's pattern requirement.
+/// Anthropic requires tool IDs to match: ^[a-zA-Z0-9_-]+
+/// Non-Anthropic providers may generate IDs with invalid characters.
+fn sanitize_tool_use_ids(request: &mut AnthropicRequest, is_anthropic_target: bool) {
+    if !is_anthropic_target {
+        return;
+    }
+
+    let mut sanitized_count = 0;
+
+    for message in &mut request.messages {
+        if let MessageContent::Blocks(blocks) = &mut message.content {
+            for block in blocks.iter_mut() {
+                match block {
+                    ContentBlock::Known(KnownContentBlock::ToolUse { id, name, input }) => {
+                        let sanitized = sanitize_tool_id(id);
+                        if sanitized != *id {
+                            tracing::debug!("🔧 Sanitized tool_use.id: {} → {}", id, sanitized);
+                            *block = ContentBlock::tool_use(
+                                sanitized,
+                                name.clone(),
+                                input.clone(),
+                            );
+                            sanitized_count += 1;
+                        }
+                    }
+                    ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content }) => {
+                        let sanitized = sanitize_tool_id(tool_use_id);
+                        if sanitized != *tool_use_id {
+                            tracing::debug!("🔧 Sanitized tool_use_id: {} → {}", tool_use_id, sanitized);
+                            *block = ContentBlock::tool_result(
+                                sanitized,
+                                content.clone(),
+                            );
+                            sanitized_count += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if sanitized_count > 0 {
+        tracing::info!("🔧 Sanitized {} tool IDs for Anthropic", sanitized_count);
+    }
+}
+
+/// Sanitize a tool ID to match pattern ^[a-zA-Z0-9_-]+
+fn sanitize_tool_id(id: &str) -> String {
+    id.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
 }
 
 /// Generic Anthropic-compatible provider
@@ -308,56 +338,34 @@ impl AnthropicCompatibleProvider {
             token_store,
         )
     }
-}
 
-#[async_trait]
-impl AnthropicProvider for AnthropicCompatibleProvider {
-    async fn send_message(&self, request: AnthropicRequest) -> Result<ProviderResponse, ProviderError> {
-        let url = format!("{}/v1/messages", self.base_url);
-
-        // Strip thinking blocks with incompatible signatures
-        let mut request = request;
-        let is_anthropic = self.base_url.contains("anthropic.com");
-        strip_incompatible_thinking_blocks(&mut request, is_anthropic);
-
-        // Get authentication header value (API key or OAuth token)
-        let auth_value = self.get_auth_header().await?;
-
-        // Build request with authentication
+    /// Helper to send a message request (used for retry logic)
+    async fn try_send_message(&self, url: &str, auth_value: &str, request: &AnthropicRequest) -> Result<ProviderResponse, ProviderError> {
         let mut req_builder = self.client
-            .post(&url)
+            .post(url)
             .header("anthropic-version", "2023-06-01")
             .header("Content-Type", "application/json");
 
         // Set auth header based on OAuth vs API key
         if self.is_oauth() {
-            // OAuth: Use Authorization Bearer token
             req_builder = req_builder
                 .header("Authorization", format!("Bearer {}", auth_value))
                 .header("anthropic-beta", "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14");
-            tracing::debug!("🔐 Using OAuth Bearer token for {}", self.name);
         } else {
-            // API Key: Use x-api-key
             req_builder = req_builder.header("x-api-key", auth_value);
         }
 
-        // Add custom headers (for OpenRouter, etc.)
+        // Add custom headers
         for (key, value) in &self.custom_headers {
             req_builder = req_builder.header(key, value);
         }
 
-        // Send request (pass-through, no transformation needed!)
-        let response = req_builder
-            .json(&request)
-            .send()
-            .await?;
+        let response = req_builder.json(request).send().await?;
 
-        // Check for errors
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
 
-            // If 401 and using OAuth, token might be invalid/expired
             if status == 401 && self.is_oauth() {
                 tracing::warn!("🔄 Received 401, OAuth token may be invalid or expired");
             }
@@ -368,11 +376,9 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             });
         }
 
-        // Get response body as text for debugging
         let response_text = response.text().await?;
         tracing::debug!("{} provider response body: {}", self.name, response_text);
 
-        // Try to parse the response (already in Anthropic format!)
         let provider_response: ProviderResponse = serde_json::from_str(&response_text)
             .map_err(|e| {
                 tracing::error!("Failed to parse {} response: {}", self.name, e);
@@ -381,6 +387,73 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             })?;
 
         Ok(provider_response)
+    }
+
+    /// Helper to send a streaming request (used for retry logic)
+    async fn try_send_stream_request(&self, url: &str, auth_value: &str, request: &AnthropicRequest) -> Result<reqwest::Response, ProviderError> {
+        let mut req_builder = self.client
+            .post(url)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json");
+
+        if self.is_oauth() {
+            req_builder = req_builder
+                .header("Authorization", format!("Bearer {}", auth_value))
+                .header("anthropic-beta", "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14");
+        } else {
+            req_builder = req_builder.header("x-api-key", auth_value);
+        }
+
+        for (key, value) in &self.custom_headers {
+            req_builder = req_builder.header(key, value);
+        }
+
+        let response = req_builder.json(request).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+
+            if status == 401 && self.is_oauth() {
+                tracing::warn!("🔄 Received 401 on streaming, OAuth token may be invalid or expired");
+            }
+
+            return Err(ProviderError::ApiError {
+                status,
+                message: format!("{} API error: {}", self.name, error_text),
+            });
+        }
+
+        Ok(response)
+    }
+}
+
+#[async_trait]
+impl AnthropicProvider for AnthropicCompatibleProvider {
+    async fn send_message(&self, request: AnthropicRequest) -> Result<ProviderResponse, ProviderError> {
+        let url = format!("{}/v1/messages", self.base_url);
+
+        // Sanitize tool IDs for Anthropic
+        let mut request = request;
+        let is_anthropic = self.base_url.contains("anthropic.com");
+        sanitize_tool_use_ids(&mut request, is_anthropic);
+
+        // Get authentication header value (API key or OAuth token)
+        let auth_value = self.get_auth_header().await?;
+
+        // Try request, retry with stripped thinking blocks on signature error
+        let result = self.try_send_message(&url, &auth_value, &request).await;
+
+        // If signature error, strip thinking blocks and retry
+        if let Err(ProviderError::ApiError { message, .. }) = &result {
+            if message.contains("Invalid `signature` in `thinking` block") {
+                tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying");
+                strip_signed_thinking_blocks(&mut request);
+                return self.try_send_message(&url, &auth_value, &request).await;
+            }
+        }
+
+        result
     }
 
     async fn count_tokens(&self, request: CountTokensRequest) -> Result<CountTokensResponse, ProviderError> {
@@ -444,11 +517,11 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
                     blocks.iter()
                         .filter_map(|block| {
                             match block {
-                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
-                                crate::models::ContentBlock::ToolResult { content, .. } => {
+                                ContentBlock::Known(KnownContentBlock::Text { text, .. }) => Some(text.clone()),
+                                ContentBlock::Known(KnownContentBlock::ToolResult { content, .. }) => {
                                     Some(content.to_string())
                                 }
-                                crate::models::ContentBlock::Thinking { raw } => {
+                                ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
                                     raw.get("thinking").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 }
                                 _ => None,
@@ -476,55 +549,28 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
 
         let url = format!("{}/v1/messages", self.base_url);
 
-        // Strip thinking blocks with incompatible signatures
+        // Sanitize tool IDs for Anthropic
         let mut request = request;
         let is_anthropic = self.base_url.contains("anthropic.com");
-        strip_incompatible_thinking_blocks(&mut request, is_anthropic);
+        sanitize_tool_use_ids(&mut request, is_anthropic);
 
         // Get authentication header value
         let auth_value = self.get_auth_header().await?;
 
-        // Build request with authentication
-        let mut req_builder = self.client
-            .post(&url)
-            .header("anthropic-version", "2023-06-01")
-            .header("Content-Type", "application/json");
-
-        // Set auth header based on OAuth vs API key
-        if self.is_oauth() {
-            req_builder = req_builder
-                .header("Authorization", format!("Bearer {}", auth_value))
-                .header("anthropic-beta", "oauth-2025-04-20,claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14");
-            tracing::debug!("🔐 Using OAuth Bearer token for streaming on {}", self.name);
-        } else {
-            req_builder = req_builder.header("x-api-key", auth_value);
-        }
-
-        // Add custom headers
-        for (key, value) in &self.custom_headers {
-            req_builder = req_builder.header(key, value);
-        }
-
-        // Send request with stream=true
-        let response = req_builder
-            .json(&request)
-            .send()
-            .await?;
-
-        // Check for errors
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-
-            if status == 401 && self.is_oauth() {
-                tracing::warn!("🔄 Received 401 on streaming, OAuth token may be invalid or expired");
+        // Try request, retry with stripped thinking blocks on signature error
+        let response = match self.try_send_stream_request(&url, &auth_value, &request).await {
+            Ok(resp) => resp,
+            Err(ProviderError::ApiError { status, message }) => {
+                if message.contains("Invalid `signature` in `thinking` block") {
+                    tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying stream");
+                    strip_signed_thinking_blocks(&mut request);
+                    self.try_send_stream_request(&url, &auth_value, &request).await?
+                } else {
+                    return Err(ProviderError::ApiError { status, message });
+                }
             }
-
-            return Err(ProviderError::ApiError {
-                status,
-                message: format!("{} API error: {}", self.name, error_text),
-            });
-        }
+            Err(e) => return Err(e),
+        };
 
         // Extract headers to forward (only for Anthropic backend)
         let headers = if is_anthropic {

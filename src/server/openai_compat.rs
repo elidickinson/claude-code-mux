@@ -129,7 +129,7 @@ pub fn transform_openai_to_anthropic(openai_req: OpenAIRequest) -> Result<Anthro
                                 .filter_map(|part| {
                                     match part {
                                         OpenAIContentPart::Text { text } => {
-                                            Some(ContentBlock::Text { text: text.clone(), cache_control: None })
+                                            Some(ContentBlock::text(text.clone(), None))
                                         }
                                         OpenAIContentPart::ImageUrl { image_url } => {
                                             // Parse data URL or external URL
@@ -151,27 +151,23 @@ pub fn transform_openai_to_anthropic(openai_req: OpenAIRequest) -> Result<Anthro
                                                         "image/png" // default
                                                     };
 
-                                                    Some(ContentBlock::Image {
-                                                        source: crate::models::ImageSource {
-                                                            r#type: "base64".to_string(),
-                                                            media_type: Some(media_type.to_string()),
-                                                            data: Some(data.to_string()),
-                                                            url: None,
-                                                        }
-                                                    })
+                                                    Some(ContentBlock::image(crate::models::ImageSource {
+                                                        r#type: "base64".to_string(),
+                                                        media_type: Some(media_type.to_string()),
+                                                        data: Some(data.to_string()),
+                                                        url: None,
+                                                    }))
                                                 } else {
                                                     None
                                                 }
                                             } else {
                                                 // External URL
-                                                Some(ContentBlock::Image {
-                                                    source: crate::models::ImageSource {
-                                                        r#type: "url".to_string(),
-                                                        media_type: None,
-                                                        data: None,
-                                                        url: Some(image_url.url.clone()),
-                                                    }
-                                                })
+                                                Some(ContentBlock::image(crate::models::ImageSource {
+                                                    r#type: "url".to_string(),
+                                                    media_type: None,
+                                                    data: None,
+                                                    url: Some(image_url.url.clone()),
+                                                }))
                                             }
                                         }
                                     }
@@ -224,12 +220,7 @@ pub fn transform_anthropic_to_openai(
 ) -> OpenAIResponse {
     // Extract text content from content blocks
     let content = anthropic_resp.content.iter()
-        .filter_map(|block| {
-            match block {
-                ContentBlock::Text { text, .. } => Some(text.clone()),
-                _ => None,
-            }
-        })
+        .filter_map(|block| block.as_text().map(|s| s.to_string()))
         .collect::<Vec<_>>()
         .join("\n");
 

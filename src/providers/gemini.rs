@@ -1,6 +1,6 @@
 use super::{AnthropicProvider, ProviderError, ProviderResponse, StreamResponse, Usage};
 use crate::auth::{OAuthClient, OAuthConfig, TokenStore};
-use crate::models::{AnthropicRequest, ContentBlock, MessageContent, SystemPrompt};
+use crate::models::{AnthropicRequest, ContentBlock, KnownContentBlock, MessageContent, SystemPrompt};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -193,12 +193,12 @@ impl GeminiProvider {
                     let mut parts = Vec::new();
                     for block in blocks {
                         match block {
-                            ContentBlock::Text { text, .. } => {
+                            ContentBlock::Known(KnownContentBlock::Text { text, .. }) => {
                                 parts.push(GeminiPart::Text {
                                     text: text.clone(),
                                 });
                             }
-                            ContentBlock::Image { source } => {
+                            ContentBlock::Known(KnownContentBlock::Image { source }) => {
                                 // Convert to Gemini inline_data format
                                 if let (Some(media_type), Some(data)) =
                                     (&source.media_type, &source.data)
@@ -211,7 +211,7 @@ impl GeminiProvider {
                                     });
                                 }
                             }
-                            ContentBlock::Thinking { raw } => {
+                            ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
                                 // Gemini doesn't have thinking blocks, convert to text
                                 if let Some(thinking) = raw.get("thinking").and_then(|v| v.as_str()) {
                                     parts.push(GeminiPart::Text {
@@ -220,7 +220,7 @@ impl GeminiProvider {
                                 }
                             }
                             _ => {
-                                // Skip tool use/result for now
+                                // Skip tool use/result and unknown for now
                             }
                         }
                     }
@@ -321,14 +321,8 @@ impl GeminiProvider {
             .parts
             .iter()
             .map(|part| match part {
-                GeminiPart::Text { text } => ContentBlock::Text {
-                    text: text.clone(),
-                    cache_control: None,
-                },
-                _ => ContentBlock::Text {
-                    text: String::new(),
-                    cache_control: None,
-                },
+                GeminiPart::Text { text } => ContentBlock::text(text.clone(), None),
+                _ => ContentBlock::text(String::new(), None),
             })
             .collect();
 

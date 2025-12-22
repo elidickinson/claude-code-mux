@@ -1,4 +1,4 @@
-use claude_code_mux::models::{AnthropicRequest, ContentBlock, MessageContent, SystemPrompt};
+use claude_code_mux::models::{AnthropicRequest, ContentBlock, KnownContentBlock, MessageContent, SystemPrompt};
 use serde_json::json;
 
 #[test]
@@ -58,10 +58,10 @@ fn test_prompt_caching_preservation() {
             
             // First block should have cache_control
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "This content should be cached");
                     assert!(cache_control.is_some(), "Message content cache_control should be preserved");
-                    
+
                     // Verify cache_control structure
                     let cache_control = cache_control.as_ref().unwrap();
                     if let Some(cache_type) = cache_control.get("type") {
@@ -72,10 +72,10 @@ fn test_prompt_caching_preservation() {
                 }
                 _ => panic!("Expected Text content block"),
             }
-            
+
             // Second block should not have cache_control
             match &blocks[1] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "This content should not be cached");
                     assert!(cache_control.is_none(), "Non-cached content should not have cache_control");
                 }
@@ -118,17 +118,14 @@ fn test_prompt_caching_preservation() {
 
 #[test]
 fn test_passthrough_caching_behavior() {
-    // Test that when ContentBlock::Text is constructed with cache_control: None,
+    // Test that when ContentBlock::text is constructed with cache_control: None,
     // it doesn't show up in serialized output (due to skip_serializing_if)
-    let text_block_without_caching = ContentBlock::Text {
-        text: "Regular text".to_string(),
-        cache_control: None,
-    };
-    
-    let text_block_with_caching = ContentBlock::Text {
-        text: "Cached text".to_string(),
-        cache_control: Some(json!({"type": "ephemeral"})),
-    };
+    let text_block_without_caching = ContentBlock::text("Regular text".to_string(), None);
+
+    let text_block_with_caching = ContentBlock::text(
+        "Cached text".to_string(),
+        Some(json!({"type": "ephemeral"})),
+    );
     
     // Serialize both blocks
     let serialized_without = serde_json::to_string(&text_block_without_caching).unwrap();

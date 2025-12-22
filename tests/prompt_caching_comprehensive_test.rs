@@ -1,4 +1,4 @@
-use claude_code_mux::models::{AnthropicRequest, ContentBlock, MessageContent, SystemPrompt};
+use claude_code_mux::models::{AnthropicRequest, ContentBlock, KnownContentBlock, MessageContent, SystemPrompt};
 use serde_json::{json, Value};
 
 #[test]
@@ -57,17 +57,14 @@ fn test_cache_control_serialization_round_trip() {
 #[test]
 fn test_cache_control_none_omitted_from_serialization() {
     // Test that cache_control: None is not included in serialized output
-    let block_with_none = ContentBlock::Text {
-        text: "Test".to_string(),
-        cache_control: None,
-    };
-    
+    let block_with_none = ContentBlock::text("Test".to_string(), None);
+
     let serialized = serde_json::to_string(&block_with_none).unwrap();
     let parsed: Value = serde_json::from_str(&serialized).unwrap();
-    
-    assert!(parsed.get("cache_control").is_none(), 
+
+    assert!(parsed.get("cache_control").is_none(),
            "cache_control: None should not appear in serialized output");
-    
+
     // Verify the structure is still valid
     assert_eq!(parsed.get("type").unwrap(), "text");
     assert_eq!(parsed.get("text").unwrap(), "Test");
@@ -76,10 +73,10 @@ fn test_cache_control_none_omitted_from_serialization() {
 #[test]
 fn test_cache_control_some_included_in_serialization() {
     // Test that cache_control: Some(...) is included in serialized output
-    let block_with_some = ContentBlock::Text {
-        text: "Test".to_string(),
-        cache_control: Some(json!({"type": "ephemeral"})),
-    };
+    let block_with_some = ContentBlock::text(
+        "Test".to_string(),
+        Some(json!({"type": "ephemeral"})),
+    );
     
     let serialized = serde_json::to_string(&block_with_some).unwrap();
     let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -126,25 +123,25 @@ fn test_multiple_content_blocks_mixed_caching() {
             
             // First block has cache_control
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Cached content");
                     assert!(cache_control.is_some());
                 }
                 _ => panic!("Expected Text block"),
             }
-            
+
             // Second block has no cache_control
             match &blocks[1] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Non-cached content");
                     assert!(cache_control.is_none());
                 }
                 _ => panic!("Expected Text block"),
             }
-            
+
             // Third block has cache_control
             match &blocks[2] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Another cached");
                     assert!(cache_control.is_some());
                 }
@@ -189,14 +186,14 @@ fn test_cache_control_with_complex_nested_structure() {
     match &deserialized.messages[0].content {
         MessageContent::Blocks(blocks) => {
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Test with complex cache control");
                     assert!(cache_control.is_some());
-                    
+
                     let cache_ctrl = cache_control.as_ref().unwrap();
                     assert_eq!(cache_ctrl.get("type").unwrap(), "ephemeral");
                     assert_eq!(cache_ctrl.get("ttl").unwrap(), 300);
-                    
+
                     let metadata = cache_ctrl.get("metadata").unwrap();
                     assert_eq!(metadata.get("source").unwrap(), "test");
                     assert_eq!(metadata.get("version").unwrap(), "1.0");
@@ -249,25 +246,25 @@ fn test_image_blocks_dont_have_cache_control() {
             
             // First text block
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Text before image");
                     assert!(cache_control.is_some());
                 }
                 _ => panic!("Expected Text block"),
             }
-            
+
             // Image block
             match &blocks[1] {
-                ContentBlock::Image { source } => {
+                ContentBlock::Known(KnownContentBlock::Image { source }) => {
                     assert_eq!(source.r#type, "base64");
                     assert!(source.data.is_some());
                 }
                 _ => panic!("Expected Image block"),
             }
-            
+
             // Last text block
             match &blocks[2] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Text after image");
                     assert!(cache_control.is_some());
                 }
@@ -317,26 +314,26 @@ fn test_tool_use_and_tool_result_blocks_ignore_cache_control() {
             
             // First text block with cache_control
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Before tool use");
                     assert!(cache_control.is_some());
                 }
                 _ => panic!("Expected Text block"),
             }
-            
+
             // Tool use block
             match &blocks[1] {
-                ContentBlock::ToolUse { id, name, input } => {
+                ContentBlock::Known(KnownContentBlock::ToolUse { id, name, input }) => {
                     assert_eq!(id, "tool_123");
                     assert_eq!(name, "test_tool");
                     assert_eq!(input.get("param").unwrap(), "value");
                 }
                 _ => panic!("Expected ToolUse block"),
             }
-            
+
             // Last text block with cache_control
             match &blocks[2] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "After tool use");
                     assert!(cache_control.is_some());
                 }
@@ -401,7 +398,7 @@ fn test_system_prompt_blocks_mixed_with_messages() {
         MessageContent::Blocks(blocks) => {
             assert_eq!(blocks.len(), 1);
             match &blocks[0] {
-                ContentBlock::Text { cache_control, .. } => {
+                ContentBlock::Known(KnownContentBlock::Text { cache_control, .. }) => {
                     assert!(cache_control.is_some());
                 }
                 _ => panic!("Expected Text block"),
@@ -430,13 +427,13 @@ fn test_empty_cache_control_object() {
             }
         ]
     });
-    
+
     let deserialized: AnthropicRequest = serde_json::from_value(request).unwrap();
-    
+
     match &deserialized.messages[0].content {
         MessageContent::Blocks(blocks) => {
             match &blocks[0] {
-                ContentBlock::Text { cache_control, .. } => {
+                ContentBlock::Known(KnownContentBlock::Text { cache_control, .. }) => {
                     assert!(cache_control.is_some());
                     let cache_ctrl = cache_control.as_ref().unwrap();
                     assert!(cache_ctrl.is_object());
@@ -480,7 +477,7 @@ fn test_cache_control_backward_compatibility() {
     match &deserialized.messages[0].content {
         MessageContent::Blocks(blocks) => {
             match &blocks[0] {
-                ContentBlock::Text { text, cache_control } => {
+                ContentBlock::Known(KnownContentBlock::Text { text, cache_control }) => {
                     assert_eq!(text, "Old format without cache_control");
                     assert!(cache_control.is_none());
                 }

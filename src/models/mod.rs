@@ -96,12 +96,30 @@ pub enum ToolResultBlock {
     Image { source: ImageSource },
 }
 
-/// Content block for multimodal messages
+/// Content block for multimodal messages.
+///
+/// Uses untagged deserialization with a two-level approach:
+/// 1. First tries to parse as a KnownContentBlock (text, image, tool_use, etc.)
+/// 2. If that fails, falls back to Unknown which captures the raw JSON
+///
+/// This allows the proxy to handle new content types (like "document" for PDFs,
+/// or future types Anthropic may add) without failing to parse. Unknown types
+/// are passed through unchanged to the backend provider.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ContentBlock {
+    /// Known content types with structured parsing
+    Known(KnownContentBlock),
+    /// Unknown content types - pass through as raw JSON
+    Unknown(serde_json::Value),
+}
+
+/// Known content block types that we parse specifically
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
-pub enum ContentBlock {
+pub enum KnownContentBlock {
     #[serde(rename = "text")]
-    Text { 
+    Text {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<serde_json::Value>,
@@ -122,14 +140,55 @@ pub enum ContentBlock {
         content: ToolResultContent,
     },
     /// Thinking block - stored as raw JSON to preserve exact signature.
-    /// Anthropic validates signatures against exact JSON bytes, so we must
-    /// avoid any deserialization/reserialization that could change field order.
     #[serde(rename = "thinking")]
     Thinking {
-        /// Raw JSON fields passed through unchanged (contains "thinking" and "signature")
         #[serde(flatten)]
         raw: serde_json::Value,
     },
+}
+
+// Convenience constructors for ContentBlock
+impl ContentBlock {
+    pub fn text(text: String, cache_control: Option<serde_json::Value>) -> Self {
+        ContentBlock::Known(KnownContentBlock::Text { text, cache_control })
+    }
+
+    pub fn image(source: ImageSource) -> Self {
+        ContentBlock::Known(KnownContentBlock::Image { source })
+    }
+
+    pub fn tool_use(id: String, name: String, input: serde_json::Value) -> Self {
+        ContentBlock::Known(KnownContentBlock::ToolUse { id, name, input })
+    }
+
+    pub fn tool_result(tool_use_id: String, content: ToolResultContent) -> Self {
+        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content })
+    }
+
+    pub fn thinking(raw: serde_json::Value) -> Self {
+        ContentBlock::Known(KnownContentBlock::Thinking { raw })
+    }
+
+    /// Check if this is a tool result block
+    pub fn is_tool_result(&self) -> bool {
+        matches!(self, ContentBlock::Known(KnownContentBlock::ToolResult { .. }))
+    }
+
+    /// Get text content if this is a text block
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            ContentBlock::Known(KnownContentBlock::Text { text, .. }) => Some(text),
+            _ => None,
+        }
+    }
+
+    /// Get mutable reference to text content if this is a text block
+    pub fn as_text_mut(&mut self) -> Option<&mut String> {
+        match self {
+            ContentBlock::Known(KnownContentBlock::Text { text, .. }) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 /// Image source for vision API

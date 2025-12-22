@@ -1,5 +1,5 @@
 use crate::cli::AppConfig;
-use crate::models::{AnthropicRequest, ContentBlock, MessageContent, RouteDecision, RouteType, SystemPrompt};
+use crate::models::{AnthropicRequest, MessageContent, RouteDecision, RouteType, SystemPrompt};
 use anyhow::Result;
 use regex::Regex;
 use tracing::{debug, info};
@@ -301,10 +301,7 @@ impl Router {
                 // Concatenate all text blocks
                 let text: String = blocks
                     .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text, .. } => Some(text.clone()),
-                        _ => None,
-                    })
+                    .filter_map(|block| block.as_text().map(|s| s.to_string()))
                     .collect::<Vec<_>>()
                     .join(" ");
                 if text.is_empty() {
@@ -337,7 +334,7 @@ impl Router {
                 MessageContent::Blocks(blocks) => {
                     // Strip from all text blocks
                     for block in blocks.iter_mut() {
-                        if let ContentBlock::Text { text, .. } = block {
+                        if let Some(text) = block.as_text_mut() {
                             let stripped = regex.replace_all(text, "").to_string();
                             if stripped != *text {
                                 debug!("🔪 Stripped matched phrase from prompt block");

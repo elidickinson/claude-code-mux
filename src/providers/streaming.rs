@@ -269,9 +269,10 @@ where
                     0.0
                 };
 
+                let total_input = *this.input_tokens + *this.cache_creation + *this.cache_read;
+
                 // Build cache info string if caching was used
                 let cache_info = if *this.cache_creation > 0 || *this.cache_read > 0 {
-                    let total_input = *this.input_tokens + *this.cache_creation + *this.cache_read;
                     let cache_pct = if total_input > 0 {
                         (*this.cache_read * 100) / total_input
                     } else {
@@ -281,14 +282,14 @@ where
                 } else {
                     String::new()
                 };
-
                 tracing::info!(
-                    "📊 {} {}ms ttft:{}ms {:.1}t/s {} tokens{}",
+                    "📊 {} {}ms ttft:{}ms {:.1}t/s out:{} in:{}{}",
                     this.provider_name,
                     total_time.as_millis(),
                     ttft.as_millis(),
                     tok_per_sec,
                     *this.output_tokens,
+                    total_input,
                     cache_info
                 );
 

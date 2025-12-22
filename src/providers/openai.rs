@@ -1,4 +1,4 @@
-use super::{AnthropicProvider, ProviderResponse, StreamResponse, ContentBlock, Usage, error::ProviderError};
+use super::{AnthropicProvider, ProviderResponse, StreamResponse, ContentBlock, KnownContentBlock, Usage, error::ProviderError};
 use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent};
 use crate::auth::{OAuthClient, OAuthConfig, TokenStore};
 use async_trait::async_trait;
@@ -319,18 +319,13 @@ impl OpenAIProvider {
                                                         match output_type {
                                                             "reasoning" => {
                                                                 // Convert OpenAI reasoning to Claude thinking block
-                                                                content_blocks.push(ContentBlock::Thinking {
-                                                                    raw: serde_json::json!({
-                                                                        "thinking": text,
-                                                                        "signature": "" // OpenAI doesn't have signature
-                                                                    }),
-                                                                });
+                                                                content_blocks.push(ContentBlock::thinking(serde_json::json!({
+                                                                    "thinking": text,
+                                                                    "signature": "" // OpenAI doesn't have signature
+                                                                })));
                                                             }
                                                             "message" => {
-                                                                content_blocks.push(ContentBlock::Text {
-                                                                    text: text.to_string(),
-                                                                    cache_control: None,
-                                                                });
+                                                                content_blocks.push(ContentBlock::text(text.to_string(), None));
                                                             }
                                                             _ => {}
                                                         }
@@ -389,12 +384,7 @@ impl OpenAIProvider {
                 MessageContent::Text(text) => text.clone(),
                 MessageContent::Blocks(blocks) => {
                     let text = blocks.iter()
-                        .filter_map(|block| {
-                            match block {
-                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
-                                _ => None,
-                            }
-                        })
+                        .filter_map(|block| block.as_text().map(|s| s.to_string()))
                         .collect::<Vec<_>>()
                         .join("\n");
                     // Responses API requires content, use empty string if none
@@ -697,7 +687,7 @@ impl OpenAIProvider {
                     // Check if we have any tool results - they need separate messages
                     let tool_results: Vec<_> = blocks.iter()
                         .filter_map(|block| {
-                            if let crate::models::ContentBlock::ToolResult { tool_use_id, content } = block {
+                            if let ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content }) = block {
                                 Some((tool_use_id.clone(), content.to_string()))
                             } else {
                                 None
@@ -708,7 +698,7 @@ impl OpenAIProvider {
                     // Extract tool_calls from ToolUse blocks
                     let tool_calls: Vec<_> = blocks.iter()
                         .filter_map(|block| {
-                            if let crate::models::ContentBlock::ToolUse { id, name, input } = block {
+                            if let ContentBlock::Known(KnownContentBlock::ToolUse { id, name, input }) = block {
                                 Some(OpenAIToolCall {
                                     id: id.clone(),
                                     r#type: "function".to_string(),
@@ -727,12 +717,12 @@ impl OpenAIProvider {
                     let mut content_parts = Vec::new();
                     for block in blocks {
                         match block {
-                            crate::models::ContentBlock::Text { text, .. } => {
+                            ContentBlock::Known(KnownContentBlock::Text { text, .. }) => {
                                 content_parts.push(OpenAIContentPart::Text {
                                     text: text.clone(),
                                 });
                             }
-                            crate::models::ContentBlock::Image { source } => {
+                            ContentBlock::Known(KnownContentBlock::Image { source }) => {
                                 // Convert Anthropic image format to OpenAI format
                                 let url = if source.r#type == "base64" {
                                     // data:image/{media_type};base64,{data}
@@ -753,14 +743,17 @@ impl OpenAIProvider {
                                     image_url: OpenAIImageUrl { url },
                                 });
                             }
-                            crate::models::ContentBlock::ToolUse { .. } => {
+                            ContentBlock::Known(KnownContentBlock::ToolUse { .. }) => {
                                 // Already handled in tool_calls
                             }
-                            crate::models::ContentBlock::ToolResult { .. } => {
+                            ContentBlock::Known(KnownContentBlock::ToolResult { .. }) => {
                                 // Will be handled as separate messages below
                             }
-                            crate::models::ContentBlock::Thinking { .. } => {
+                            ContentBlock::Known(KnownContentBlock::Thinking { .. }) => {
                                 // OpenAI doesn't have thinking blocks, skip
+                            }
+                            ContentBlock::Unknown(_) => {
+                                // Unknown content types - skip when converting to OpenAI
                             }
                         }
                     }
@@ -890,10 +883,7 @@ impl OpenAIProvider {
 
         // Add text content if present
         if !text.is_empty() {
-            content_blocks.push(ContentBlock::Text { 
-                text,
-                cache_control: None,
-            });
+            content_blocks.push(ContentBlock::text(text, None));
         }
 
         // Non-streaming Tool Calls Transformation
@@ -911,11 +901,11 @@ impl OpenAIProvider {
                 let input = serde_json::from_str(&tool_call.function.arguments)
                     .unwrap_or(serde_json::json!({}));
 
-                content_blocks.push(ContentBlock::ToolUse {
-                    id: tool_call.id,
-                    name: tool_call.function.name,
+                content_blocks.push(ContentBlock::tool_use(
+                    tool_call.id,
+                    tool_call.function.name,
                     input,
-                });
+                ));
             }
         }
 
@@ -965,10 +955,7 @@ impl OpenAIProvider {
             id: response.id,
             r#type: "message".to_string(),
             role: "assistant".to_string(),
-            content: vec![ContentBlock::Text {
-                text,
-                cache_control: None,
-            }],
+            content: vec![ContentBlock::text(text, None)],
             model: response.model,
             stop_reason: Some("end_turn".to_string()),
             stop_sequence: None,
@@ -1436,11 +1423,11 @@ impl AnthropicProvider for OpenAIProvider {
                     blocks.iter()
                         .filter_map(|block| {
                             match block {
-                                crate::models::ContentBlock::Text { text, .. } => Some(text.clone()),
-                                crate::models::ContentBlock::ToolResult { content, .. } => {
+                                ContentBlock::Known(KnownContentBlock::Text { text, .. }) => Some(text.clone()),
+                                ContentBlock::Known(KnownContentBlock::ToolResult { content, .. }) => {
                                     Some(content.to_string())
                                 }
-                                crate::models::ContentBlock::Thinking { raw } => {
+                                ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
                                     raw.get("thinking").and_then(|v| v.as_str()).map(|s| s.to_string())
                                 }
                                 _ => None,
