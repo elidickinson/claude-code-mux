@@ -76,8 +76,9 @@ impl ToolResultContent {
             ToolResultContent::Blocks(blocks) => {
                 blocks.iter()
                     .filter_map(|block| match block {
-                        ToolResultBlock::Text { text } => Some(text.clone()),
-                        ToolResultBlock::Image { .. } => Some("[Image]".to_string()),
+                        ToolResultBlock::Known(KnownToolResultBlock::Text { text }) => Some(text.clone()),
+                        ToolResultBlock::Known(KnownToolResultBlock::Image { .. }) => Some("[Image]".to_string()),
+                        ToolResultBlock::Unknown(_) => Some("[Unknown]".to_string()),
                     })
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -86,10 +87,18 @@ impl ToolResultContent {
     }
 }
 
-/// Content blocks allowed in tool results
+/// Content blocks allowed in tool results.
+/// Uses untagged enum to handle unknown types (like tool_reference) gracefully.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ToolResultBlock {
+    Known(KnownToolResultBlock),
+    Unknown(serde_json::Value),
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "type")]
-pub enum ToolResultBlock {
+pub enum KnownToolResultBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]

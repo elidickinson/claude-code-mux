@@ -592,7 +592,7 @@ async fn handle_openai_chat_completions(
                         } else {
                             matched.clone()
                         };
-                        format!("{}:^{}", decision.route_type, trimmed)
+                        format!("{}:{}", decision.route_type, trimmed)
                     }
                     None => decision.route_type.to_string(),
                 };
@@ -842,7 +842,7 @@ async fn handle_messages(
                         } else {
                             matched.clone()
                         };
-                        format!("{}:^{}", decision.route_type, trimmed)
+                        format!("{}:{}", decision.route_type, trimmed)
                     }
                     None => decision.route_type.to_string(),
                 };
