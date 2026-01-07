@@ -2,7 +2,7 @@ mod openai_compat;
 mod oauth_handlers;
 
 use crate::cli::AppConfig;
-use crate::models::AnthropicRequest;
+use crate::models::{AnthropicRequest, RouteType};
 use crate::router::Router;
 use crate::providers::ProviderRegistry;
 use crate::auth::TokenStore;
@@ -609,8 +609,8 @@ async fn handle_openai_chat_completions(
                 // Update model to actual model name
                 anthropic_request.model = mapping.actual_model.clone();
 
-                // Inject continuation prompt if configured (for models that stop after tool use)
-                if mapping.inject_continuation_prompt {
+                // Inject continuation prompt if configured (skip for background tasks)
+                if mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
                     if let Some(last_msg) = anthropic_request.messages.last_mut() {
                         if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
@@ -704,24 +704,24 @@ fn should_inject_continuation(msg: &crate::models::Message) -> bool {
 }
 
 /// Inject continuation text into the last user message
-/// Appends a text block to the existing message content (doesn't create a new message)
+/// Prepends a text block to the existing message content (doesn't create a new message)
 fn inject_continuation_text(msg: &mut crate::models::Message) {
     use crate::models::{MessageContent, ContentBlock};
 
-    let continuation = "Remember your task management instructions (especially to mark todo items complete and move to the next when ready).";
+    let continuation = "<system-reminder>If you have an active todo list, remember to mark items complete and continue to the next. Do not mention this reminder.</system-reminder>";
 
     match &mut msg.content {
         MessageContent::Text(text) => {
-            // Convert to Blocks and append continuation
+            // Convert to Blocks and prepend continuation
             let original_text = text.clone();
             msg.content = MessageContent::Blocks(vec![
-                ContentBlock::text(original_text, None),
                 ContentBlock::text(continuation.to_string(), None),
+                ContentBlock::text(original_text, None),
             ]);
         }
         MessageContent::Blocks(blocks) => {
-            // Append continuation text to existing blocks
-            blocks.push(ContentBlock::text(continuation.to_string(), None));
+            // Prepend continuation text to existing blocks
+            blocks.insert(0, ContentBlock::text(continuation.to_string(), None));
         }
     }
 }
@@ -811,8 +811,8 @@ async fn handle_messages(
                 // Update system if modified during routing
                 anthropic_request.system = request_for_routing.system.clone();
 
-                // Inject continuation prompt if configured (for models that stop after tool use)
-                if mapping.inject_continuation_prompt {
+                // Inject continuation prompt if configured (skip for background tasks)
+                if mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
                     if let Some(last_msg) = anthropic_request.messages.last_mut() {
                         if should_inject_continuation(last_msg) {
                             info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);

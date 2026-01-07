@@ -28,7 +28,7 @@ This fork adds several significant improvements over the upstream project:
 
 - **Prompt Phrase Routing** - Route requests based on regex patterns in user messages (e.g., "Think hard" → Opus, "[fast]" → Haiku)
 - **Prompt Caching** - Anthropic prompt caching passthrough with cache hit/miss statistics and token speed metrics (partial provider support)
-- **Continuation Prompts** - Experimental (off by default): auto-inject continuation prompts to reduce model abandonment of multi-step tasks
+- **Continuation Prompts** - Experimental (off by default): auto-inject continuation prompts to reduce model abandonment of multi-step tasks (specifically an issue with GLM-4.6)
 - **Enhanced Logging** - Cache statistics, token throughput (tokens/sec), matched routing phrases, and rate limit header forwarding
 - **Better Model Switching** - Handles incompatible content blocks when switching between providers (thinking blocks, document types, etc.)
 - **Case-Insensitive Matching** - Model names matched case-insensitively for better compatibility
@@ -766,7 +766,7 @@ If z.ai fails, automatically falls back to OpenRouter. Works with all providers!
 
 ### Continuation Prompt Injection
 
-Some models (like GLM-4.6) stop prematurely after tool calls instead of continuing with multi-step tasks. The `inject_continuation_prompt` flag fixes this:
+Some models stop prematurely after tool calls instead of continuing with multi-step tasks. The `inject_continuation_prompt` flag fixes this:
 
 ```toml
 [[models]]
@@ -780,15 +780,14 @@ inject_continuation_prompt = true  # Keeps the model working through tasks
 ```
 
 **How it works:**
-- Detects when a model returns only tool results without any text response
-- Appends "Please continue if you're confident on the next step" to the existing user message
+- Detects when a user message contains only tool results (no text)
+- Prepends a `<system-reminder>` tag prompting the model to continue with todo list tasks
+- Skips injection for background tasks (subagents don't use todo lists)
 - Does NOT create a new message (preserves strict user/assistant alternation)
-- The continuation prompt appears as part of the tool_result message content
 
 **When to use:**
 - Your model stops after each tool call, waiting for you to prompt "continue"
 - You're using multi-step workflows (like TodoWrite lists) and the model abandons tasks mid-execution
-- Common with certain OpenAI-compatible models via third-party providers
 
 **Related issues:**
 - [Claude Code #6159: Agent stops mid-task](https://github.com/anthropics/claude-code/issues/6159) - Known Claude Code agent reliability issue
