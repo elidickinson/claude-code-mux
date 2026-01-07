@@ -22,8 +22,21 @@ Claude Code → Claude Code Mux → Multiple AI Providers
               (Anthropic API)    (OpenAI/Anthropic APIs + Streaming)
 ```
 
+## Fork Enhancements
+
+This fork adds several significant improvements over the upstream project:
+
+- **Prompt Phrase Routing** - Route requests based on regex patterns in user messages (e.g., "Think hard" → Opus, "[fast]" → Haiku)
+- **Prompt Caching** - Anthropic prompt caching passthrough with cache hit/miss statistics and token speed metrics (partial provider support)
+- **Continuation Prompts** - Experimental (off by default): auto-inject continuation prompts to reduce model abandonment of multi-step tasks
+- **Enhanced Logging** - Cache statistics, token throughput (tokens/sec), matched routing phrases, and rate limit header forwarding
+- **Better Model Switching** - Handles incompatible content blocks when switching between providers (thinking blocks, document types, etc.)
+- **Case-Insensitive Matching** - Model names matched case-insensitively for better compatibility
+- **Improved Error Handling** - Panic prevention, unknown content block handling, improved stability
+
 ## Table of Contents
 
+- [Fork Enhancements](#fork-enhancements)
 - [Key Features](#key-features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)

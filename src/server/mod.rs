@@ -708,7 +708,7 @@ fn should_inject_continuation(msg: &crate::models::Message) -> bool {
 fn inject_continuation_text(msg: &mut crate::models::Message) {
     use crate::models::{MessageContent, ContentBlock};
 
-    let continuation = "If you have questions or need clarification, ask now. Otherwise, please continue if you're confident on the next step.";
+    let continuation = "Remember your task management instructions (especially to mark todo items complete and move to the next when ready).";
 
     match &mut msg.content {
         MessageContent::Text(text) => {
