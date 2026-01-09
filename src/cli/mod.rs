@@ -100,9 +100,11 @@ pub struct RouterConfig {
 /// Prompt-based routing rule
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PromptRule {
-    /// Regex pattern to match against user prompt content
+    /// Regex pattern to match against user prompt content.
+    /// Can include capture groups: (pattern) or named: (?P<name>pattern)
     pub pattern: String,
-    /// Model to route to when pattern matches
+    /// Model to route to when pattern matches.
+    /// Can reference capture groups: $1, $name, ${1}, ${name}, or mixed like "prefix-$1"
     pub model: String,
     /// Strip the matched phrase from the prompt (default: false)
     #[serde(default)]

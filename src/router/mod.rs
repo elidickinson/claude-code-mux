@@ -1,8 +1,18 @@
 use crate::cli::AppConfig;
 use crate::models::{AnthropicRequest, MessageContent, RouteDecision, RouteType, SystemPrompt};
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use tracing::{debug, info};
+
+/// Regex to detect capture group references ($1, $name, ${1}, ${name})
+static CAPTURE_REF_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\$(?:\d+|[a-zA-Z_]\w*|\{[^}]+\})").unwrap());
+
+/// Check if a string contains capture group references
+fn contains_capture_reference(s: &str) -> bool {
+    s.contains('$') && CAPTURE_REF_PATTERN.is_match(s)
+}
 
 /// Compiled prompt rule with pre-compiled regex
 #[derive(Clone)]
@@ -10,6 +20,8 @@ pub struct CompiledPromptRule {
     pub regex: Regex,
     pub model: String,
     pub strip_match: bool,
+    /// True if model contains capture group references ($1, $name, etc.)
+    pub is_dynamic: bool,
 }
 
 /// Router for intelligently selecting models based on request characteristics
@@ -94,11 +106,15 @@ impl Router {
             .iter()
             .filter_map(|rule| {
                 match Regex::new(&rule.pattern) {
-                    Ok(regex) => Some(CompiledPromptRule {
-                        regex,
-                        model: rule.model.clone(),
-                        strip_match: rule.strip_match,
-                    }),
+                    Ok(regex) => {
+                        let is_dynamic = contains_capture_reference(&rule.model);
+                        Some(CompiledPromptRule {
+                            regex,
+                            model: rule.model.clone(),
+                            strip_match: rule.strip_match,
+                            is_dynamic,
+                        })
+                    }
                     Err(e) => {
                         eprintln!(
                             "Warning: Invalid prompt_rule pattern '{}': {}. Skipping.",
@@ -253,6 +269,7 @@ impl Router {
     /// Match prompt rules against the last user message content
     /// Returns (model_name, matched_text) if a rule matches, None otherwise
     /// Strips the matched phrase from the prompt if strip_match is true
+    /// For dynamic rules (model contains $refs), expands capture groups in the model name
     fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<(String, String)> {
         if self.prompt_rules.is_empty() {
             return None;
@@ -263,13 +280,23 @@ impl Router {
 
         // Check each rule in order (first match wins)
         for rule in &self.prompt_rules {
-            if let Some(matched) = rule.regex.find(&user_content) {
-                let matched_text = matched.as_str().to_string();
+            if let Some(captures) = rule.regex.captures(&user_content) {
+                let matched_text = captures
+                    .get(0)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+
+                // Resolve the model name (expand capture refs if dynamic)
+                let model_name = if rule.is_dynamic {
+                    Self::expand_model_template(&rule.model, &captures)
+                } else {
+                    rule.model.clone()
+                };
 
                 debug!(
                     "📝 Prompt rule matched: pattern='{}' → model='{}' (strip_match={})",
                     rule.regex.as_str(),
-                    rule.model,
+                    model_name,
                     rule.strip_match
                 );
 
@@ -278,11 +305,19 @@ impl Router {
                     self.strip_match_from_last_user_message(request, &rule.regex);
                 }
 
-                return Some((rule.model.clone(), matched_text));
+                return Some((model_name, matched_text));
             }
         }
 
         None
+    }
+
+    /// Expand capture group references in a model template string
+    /// Supports $1, $name, ${1}, ${name} syntax via regex crate's Captures::expand
+    fn expand_model_template(template: &str, captures: &regex::Captures) -> String {
+        let mut expanded = String::new();
+        captures.expand(template, &mut expanded);
+        expanded
     }
 
     /// Extract the text content from the last user message
@@ -651,5 +686,93 @@ mod tests {
         } else {
             panic!("Expected text content");
         }
+    }
+
+    #[test]
+    fn test_prompt_rule_dynamic_model_numeric() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"(?i)CCM-MODEL:([a-zA-Z0-9._-]+)".to_string(),
+            model: "$1".to_string(),
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("CCM-MODEL:deepseek-v3 Write a function");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "deepseek-v3");
+
+        // Verify strip worked
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert!(!text.contains("CCM-MODEL"));
+            assert!(text.contains("Write a function"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[test]
+    fn test_prompt_rule_dynamic_model_named() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"(?i)USE-MODEL:(?P<model>[a-zA-Z0-9._-]+)".to_string(),
+            model: "$model".to_string(),
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("USE-MODEL:gpt-4o please help");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "gpt-4o");
+    }
+
+    #[test]
+    fn test_prompt_rule_dynamic_model_with_prefix() {
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"@(\w+)-mode".to_string(),
+            model: "provider-$1".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("@fast-mode explain this");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "provider-fast");
+    }
+
+    #[test]
+    fn test_prompt_rule_static_model_unchanged() {
+        // Ensure existing static behavior is preserved (no $ references)
+        use crate::cli::PromptRule;
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[static\]".to_string(),
+            model: "static-model".to_string(), // No $ references
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = create_simple_request("[static] do something");
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "static-model");
+    }
+
+    #[test]
+    fn test_contains_capture_reference() {
+        assert!(super::contains_capture_reference("$1"));
+        assert!(super::contains_capture_reference("$model"));
+        assert!(super::contains_capture_reference("${1}"));
+        assert!(super::contains_capture_reference("${name}"));
+        assert!(super::contains_capture_reference("prefix-$1-suffix"));
+        assert!(!super::contains_capture_reference("static-model"));
+        assert!(!super::contains_capture_reference("no-refs-here"));
     }
 }
