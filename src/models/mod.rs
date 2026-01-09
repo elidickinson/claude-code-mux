@@ -147,6 +147,10 @@ pub enum KnownContentBlock {
     ToolResult {
         tool_use_id: String,
         content: ToolResultContent,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_error: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<serde_json::Value>,
     },
     /// Thinking block - stored as raw JSON to preserve exact signature.
     #[serde(rename = "thinking")]
@@ -171,7 +175,11 @@ impl ContentBlock {
     }
 
     pub fn tool_result(tool_use_id: String, content: ToolResultContent) -> Self {
-        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content })
+        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error: false, cache_control: None })
+    }
+
+    pub fn tool_result_error(tool_use_id: String, content: ToolResultContent) -> Self {
+        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error: true, cache_control: None })
     }
 
     pub fn thinking(raw: serde_json::Value) -> Self {
