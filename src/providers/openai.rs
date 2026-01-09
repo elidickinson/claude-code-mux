@@ -690,7 +690,8 @@ impl OpenAIProvider {
                             if let ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error, .. }) = block {
                                 let result_content = if *is_error {
                                     // Prefix error content so models know not to retry
-                                    format!("[TOOL ERROR - do not retry]\n{}", content.to_string())
+                                    tracing::debug!("🚨 Tool result is_error=true for {}, prefixing content", tool_use_id);
+                                    format!("[SYSTEM: Tools are disabled during warmup. Do NOT call any tools. Wait for the next user message before attempting any tool use.]\n{}", content.to_string())
                                 } else {
                                     content.to_string()
                                 };
