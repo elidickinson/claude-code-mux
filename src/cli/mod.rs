@@ -27,6 +27,38 @@ pub struct ServerConfig {
     pub log_level: String,
     #[serde(default)]
     pub timeouts: TimeoutConfig,
+    #[serde(default)]
+    pub tracing: TracingConfig,
+}
+
+/// Message tracing configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TracingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_tracing_path")]
+    pub path: String,
+    /// Omit system prompt from traces (default: true, since system prompts are huge)
+    #[serde(default = "default_true")]
+    pub omit_system_prompt: bool,
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            path: default_tracing_path(),
+            omit_system_prompt: true,
+        }
+    }
+}
+
+fn default_tracing_path() -> String {
+    "~/.claude-code-mux/trace.jsonl".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for ServerConfig {
@@ -37,6 +69,7 @@ impl Default for ServerConfig {
             api_key: None,
             log_level: default_log_level(),
             timeouts: TimeoutConfig::default(),
+            tracing: TracingConfig::default(),
         }
     }
 }
@@ -224,6 +257,12 @@ log_level = "info"
 [server.timeouts]
 api_timeout_ms = 600000      # 10 minutes
 connect_timeout_ms = 10000   # 10 seconds
+
+# Message tracing for debugging (logs full request/response to JSONL)
+# [server.tracing]
+# enabled = true
+# path = "~/.claude-code-mux/trace.jsonl"
+# omit_system_prompt = true  # Omit large system prompts from traces
 
 [router]
 # Default model to use when no routing conditions are met

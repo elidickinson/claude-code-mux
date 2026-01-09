@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 mod auth;
 mod cli;
+mod message_tracing;
 mod models;
 mod pid;
 mod providers;
