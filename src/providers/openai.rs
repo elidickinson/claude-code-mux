@@ -687,8 +687,14 @@ impl OpenAIProvider {
                     // Check if we have any tool results - they need separate messages
                     let tool_results: Vec<_> = blocks.iter()
                         .filter_map(|block| {
-                            if let ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content }) = block {
-                                Some((tool_use_id.clone(), content.to_string()))
+                            if let ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error, .. }) = block {
+                                let result_content = if *is_error {
+                                    // Prefix error content so models know not to retry
+                                    format!("[TOOL ERROR - do not retry]\n{}", content.to_string())
+                                } else {
+                                    content.to_string()
+                                };
+                                Some((tool_use_id.clone(), result_content))
                             } else {
                                 None
                             }

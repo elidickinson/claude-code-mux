@@ -118,14 +118,16 @@ fn sanitize_tool_use_ids(request: &mut AnthropicRequest, is_anthropic_target: bo
                             sanitized_count += 1;
                         }
                     }
-                    ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content }) => {
+                    ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error, cache_control }) => {
                         let sanitized = sanitize_tool_id(tool_use_id);
                         if sanitized != *tool_use_id {
                             tracing::debug!("🔧 Sanitized tool_use_id: {} → {}", tool_use_id, sanitized);
-                            *block = ContentBlock::tool_result(
-                                sanitized,
-                                content.clone(),
-                            );
+                            *block = ContentBlock::Known(KnownContentBlock::ToolResult {
+                                tool_use_id: sanitized,
+                                content: content.clone(),
+                                is_error: *is_error,
+                                cache_control: cache_control.clone(),
+                            });
                             sanitized_count += 1;
                         }
                     }
