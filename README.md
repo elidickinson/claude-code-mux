@@ -838,6 +838,30 @@ This shows:
 
 That's it! Claude Code will automatically use the statusline script when you start a new session.
 
+### Message Tracing
+
+Log full request/response messages to JSONL for debugging:
+
+```toml
+[server.tracing]
+enabled = true
+path = "~/.claude-code-mux/trace.jsonl"
+omit_system_prompt = true  # Skip large system prompts
+```
+
+**Output format** (one JSON per line):
+```jsonl
+{"ts":"...","dir":"req","id":"a1b2c3d4","model":"claude-sonnet-4","provider":"anthropic","messages":[...]}
+{"ts":"...","dir":"res","id":"a1b2c3d4","latency_ms":1250,"content":[...]}
+{"ts":"...","dir":"err","id":"e5f6g7h8","error":"Provider timeout"}
+```
+
+**View traces:**
+```bash
+tail -f ~/.claude-code-mux/trace.jsonl | jq
+grep '"id":"a1b2c3d4"' trace.jsonl | jq  # Filter by request
+```
+
 ## CLI Usage
 
 ### Start the Server
