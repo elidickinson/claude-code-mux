@@ -174,14 +174,6 @@ impl ContentBlock {
         ContentBlock::Known(KnownContentBlock::ToolUse { id, name, input })
     }
 
-    pub fn tool_result(tool_use_id: String, content: ToolResultContent) -> Self {
-        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error: false, cache_control: None })
-    }
-
-    pub fn tool_result_error(tool_use_id: String, content: ToolResultContent) -> Self {
-        ContentBlock::Known(KnownContentBlock::ToolResult { tool_use_id, content, is_error: true, cache_control: None })
-    }
-
     pub fn thinking(raw: serde_json::Value) -> Self {
         ContentBlock::Known(KnownContentBlock::Thinking { raw })
     }

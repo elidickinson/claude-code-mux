@@ -96,11 +96,6 @@ impl MessageTracer {
         }
     }
 
-    /// Check if tracing is enabled
-    pub fn is_enabled(&self) -> bool {
-        self.file.is_some()
-    }
-
     /// Trace an incoming request
     pub fn trace_request(
         &self,
