@@ -206,29 +206,10 @@
                 <!-- Action Buttons -->
                 <div class="mt-auto border-t border-gray-200 p-6 space-y-3">
                     <button
-                        onclick="saveAllConfig()"
+                        onclick="saveConfig()"
                         class="w-full btn-primary text-sm py-3"
                     >
-                        💾 Save to Server
-                    </button>
-                    <button
-                        onclick="saveAndRestart()"
-                        class="w-full btn-secondary text-sm py-3 flex items-center justify-center gap-2"
-                    >
-                        <svg
-                            class="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                        >
-                            <path
-                                stroke-linecap="round"
-                                stroke-linejoin="round"
-                                stroke-width="2"
-                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                            />
-                        </svg>
-                        <span>Save & Restart</span>
+                        💾 Save
                     </button>
                     <div class="text-xs text-gray-500 text-center pt-2">
                         Last saved: <span id="last-saved">-</span>
@@ -465,12 +446,11 @@
                                         >POST</span
                                     >
                                     <code class="text-sm font-mono"
-                                        >/api/restart</code
+                                        >/api/reload</code
                                     >
                                 </div>
                                 <p class="text-xs text-gray-600">
-                                    Restart the server to apply configuration
-                                    changes
+                                    Hot-reload configuration without restarting
                                 </p>
                             </div>
                         </div>
@@ -1741,10 +1721,10 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                             <div class="flex gap-4">
                                 <button
                                     type="button"
-                                    onclick="restartServer()"
+                                    onclick="reloadConfig()"
                                     class="btn-primary flex-1"
                                 >
-                                    Restart Server
+                                    Reload Config
                                 </button>
                             </div>
                         </div>
@@ -3505,57 +3485,37 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     }
                 });
 
-            async function restartServer() {
-                if (!confirm("Are you sure you want to restart the server?"))
-                    return;
-
+            async function reloadConfig() {
                 try {
-                    await fetch("/api/restart", { method: "POST" });
-                    notifySuccess("Server restarted");
+                    await fetch("/api/reload", { method: "POST" });
+                    notifySuccess("Configuration reloaded");
                 } catch (error) {
-                    console.error("Failed to restart server:", error);
-                    notifyError("Failed to restart server");
+                    console.error("Failed to reload config:", error);
+                    notifyError("Failed to reload config");
                 }
             }
 
             // Global Actions
-            async function saveAllConfig() {
-                console.log("Saving all configuration...");
+            async function saveConfig() {
+                console.log("Saving configuration...");
 
                 try {
                     // Sync localStorage to server
                     const success = await syncToServer();
-
-                    if (success) {
-                        updateLastSaved();
-                        notifySuccess("All settings saved to server");
-                        renderOverview();
-                    } else {
+                    if (!success) {
                         notifyError("Failed to save to server");
+                        return;
                     }
+
+                    // Hot-reload the config
+                    await fetch("/api/reload", { method: "POST" });
+
+                    updateLastSaved();
+                    notifySuccess("Configuration saved");
+                    renderOverview();
                 } catch (error) {
-                    console.error("Failed to save all config:", error);
+                    console.error("Failed to save config:", error);
                     notifyError("Failed to save");
-                }
-            }
-
-            async function saveAndRestart() {
-                if (
-                    !confirm(
-                        "Save settings and Are you sure you want to restart the server?",
-                    )
-                )
-                    return;
-
-                try {
-                    await saveAllConfig();
-                    setTimeout(async () => {
-                        await fetch("/api/restart", { method: "POST" });
-                        notifySuccess("Server restarted");
-                    }, 500);
-                } catch (error) {
-                    console.error("Failed to save and restart:", error);
-                    notifyError("Failed to save and restart");
                 }
             }
 

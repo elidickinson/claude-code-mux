@@ -23,15 +23,29 @@ use tracing::{debug, error, info};
 use futures::stream::TryStreamExt;
 use chrono::Local;
 
-/// Application state shared across handlers
-#[derive(Clone)]
-pub struct AppState {
+/// Reloadable components - rebuilt on config reload
+pub struct ReloadableState {
     pub config: AppConfig,
     pub router: Router,
     pub provider_registry: Arc<ProviderRegistry>,
+}
+
+/// Application state shared across handlers
+pub struct AppState {
+    /// Reloadable state behind a single lock for atomic updates
+    inner: std::sync::RwLock<Arc<ReloadableState>>,
+
+    /// Persistent state - NOT reloaded
     pub token_store: TokenStore,
     pub config_path: std::path::PathBuf,
     pub message_tracer: Arc<MessageTracer>,
+}
+
+impl AppState {
+    /// Get a snapshot of current reloadable state
+    pub fn snapshot(&self) -> Arc<ReloadableState> {
+        self.inner.read().unwrap().clone()
+    }
 }
 
 const RECENT_REQUESTS_WINDOW: usize = 20;
@@ -106,10 +120,15 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
     // Initialize message tracer
     let message_tracer = Arc::new(MessageTracer::new(config.server.tracing.clone()));
 
-    let state = Arc::new(AppState {
+    // Build reloadable state
+    let reloadable = Arc::new(ReloadableState {
         config: config.clone(),
         router,
         provider_registry,
+    });
+
+    let state = Arc::new(AppState {
+        inner: std::sync::RwLock::new(reloadable),
         token_store,
         config_path,
         message_tracer,
@@ -129,7 +148,7 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
         .route("/api/config", post(update_config))
         .route("/api/config/json", get(get_config_json))
         .route("/api/config/json", post(update_config_json))
-        .route("/api/restart", post(restart_server))
+        .route("/api/reload", post(reload_config))
         // OAuth endpoints
         .route("/api/oauth/authorize", post(oauth_handlers::oauth_authorize))
         .route("/api/oauth/exchange", post(oauth_handlers::oauth_exchange))
@@ -199,16 +218,17 @@ async fn get_models(State(_state): State<Arc<AppState>>) -> Result<Json<serde_js
 
 /// Get current routing configuration
 async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let inner = state.snapshot();
     Json(serde_json::json!({
         "server": {
-            "host": state.config.server.host,
-            "port": state.config.server.port,
+            "host": inner.config.server.host,
+            "port": inner.config.server.port,
         },
         "router": {
-            "default": state.config.router.default,
-            "background": state.config.router.background,
-            "think": state.config.router.think,
-            "websearch": state.config.router.websearch,
+            "default": inner.config.router.default,
+            "background": inner.config.router.background,
+            "think": inner.config.router.think,
+            "websearch": inner.config.router.websearch,
         }
     }))
 }
@@ -266,32 +286,35 @@ async fn update_config(
 
 /// Get providers configuration
 async fn get_providers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(state.config.providers.clone())
+    let inner = state.snapshot();
+    Json(inner.config.providers.clone())
 }
 
 /// Get models configuration
 async fn get_models_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    Json(state.config.models.clone())
+    let inner = state.snapshot();
+    Json(inner.config.models.clone())
 }
 
 /// Get full configuration as JSON (for admin UI)
 async fn get_config_json(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let inner = state.snapshot();
     Json(serde_json::json!({
         "server": {
-            "host": state.config.server.host,
-            "port": state.config.server.port,
+            "host": inner.config.server.host,
+            "port": inner.config.server.port,
         },
         "router": {
-            "default": state.config.router.default,
-            "background": state.config.router.background,
-            "think": state.config.router.think,
-            "websearch": state.config.router.websearch,
-            "auto_map_regex": state.config.router.auto_map_regex,
-            "background_regex": state.config.router.background_regex,
-            "prompt_rules": state.config.router.prompt_rules,
+            "default": inner.config.router.default,
+            "background": inner.config.router.background,
+            "think": inner.config.router.think,
+            "websearch": inner.config.router.websearch,
+            "auto_map_regex": inner.config.router.auto_map_regex,
+            "background_regex": inner.config.router.background_regex,
+            "prompt_rules": inner.config.router.prompt_rules,
         },
-        "providers": state.config.providers,
-        "models": state.config.models,
+        "providers": inner.config.providers,
+        "models": inner.config.models,
     }))
 }
 
@@ -399,114 +422,55 @@ async fn update_config_json(
     })))
 }
 
-/// Restart server automatically using shell script
-async fn restart_server(State(state): State<Arc<AppState>>) -> Response {
-    info!("🔄 Server restart requested via UI");
+/// Reload configuration without restarting the server
+async fn reload_config(State(state): State<Arc<AppState>>) -> Response {
+    info!("🔄 Configuration reload requested via UI");
 
-    let port = state.config.server.port;
-
-    // Create a shell script to handle restart
-    match create_and_execute_restart_script(port) {
-        Ok(_) => {
-            info!("✅ Restart script initiated");
-
-            let response = Html("<div class='px-4 py-3 rounded-xl bg-green-500/20 border border-green-500/50 text-foreground text-sm'><strong>✅ Server restarting...</strong><br/>Shutting down current instance and starting new one.</div>").into_response();
-
-            // Shutdown current process after a short delay
-            tokio::spawn(async {
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                info!("Shutting down for restart...");
-                std::process::exit(0);
-            });
-
-            response
-        }
+    // 1. Read and parse new config (all sync, no locks held)
+    let config_str = match std::fs::read_to_string(&state.config_path) {
+        Ok(s) => s,
         Err(e) => {
-            error!("Failed to initiate restart: {}", e);
-            Html(format!("<div class='px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-foreground text-sm'><strong>❌ Restart failed</strong><br/>Error: {}</div>", e)).into_response()
+            error!("Failed to read config: {}", e);
+            return Html(format!("<div class='px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-foreground text-sm'><strong>❌ Reload failed</strong><br/>Failed to read config: {}</div>", e)).into_response();
         }
-    }
-}
+    };
 
-/// Create and execute a shell script that waits for shutdown and restarts
-fn create_and_execute_restart_script(port: u16) -> std::io::Result<()> {
-    use std::process::Command;
-    use std::fs;
-
-    // Get current executable path and PID
-    let exe_path = std::env::current_exe()?;
-    let current_pid = std::process::id();
-
-    info!("Creating restart script for PID: {} on port: {}", current_pid, port);
-
-    #[cfg(unix)]
-    {
-        // Create shell script
-        let script_content = format!(
-            r#"#!/bin/bash
-# Wait for old process to exit
-while kill -0 {} 2>/dev/null; do
-    sleep 0.1
-done
-# Start new server
-{} start --port {} > /dev/null 2>&1 &
-"#,
-            current_pid,
-            exe_path.display(),
-            port
-        );
-
-        let script_path = "/tmp/ccm_restart.sh";
-        fs::write(script_path, script_content)?;
-
-        // Make executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(script_path)?.permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(script_path, perms)?;
+    let new_config: AppConfig = match toml::from_str(&config_str) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse config: {}", e);
+            return Html(format!("<div class='px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-foreground text-sm'><strong>❌ Reload failed</strong><br/>Failed to parse config: {}</div>", e)).into_response();
         }
+    };
 
-        // Execute script in background
-        Command::new("sh")
-            .arg(script_path)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
+    // 2. Build new router (compiles regexes)
+    let new_router = Router::new(new_config.clone());
 
-        info!("Restart script started");
-    }
+    // 3. Build new provider registry (reuse existing token_store)
+    let new_registry = match ProviderRegistry::from_configs_with_models(
+        &new_config.providers,
+        Some(state.token_store.clone()),
+        &new_config.models,
+    ) {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            error!("Failed to init providers: {}", e);
+            return Html(format!("<div class='px-4 py-3 rounded-xl bg-red-500/20 border border-red-500/50 text-foreground text-sm'><strong>❌ Reload failed</strong><br/>Failed to init providers: {}</div>", e)).into_response();
+        }
+    };
 
-    #[cfg(windows)]
-    {
-        // Create batch script for Windows
-        let script_content = format!(
-            r#"@echo off
-:wait
-tasklist /FI "PID eq {}" 2>NUL | find /I /N "ccm.exe">NUL
-if "%ERRORLEVEL%"=="0" (
-    timeout /t 1 /nobreak > nul
-    goto wait
-)
-start "" "{}" start --port {}
-"#,
-            current_pid,
-            exe_path.display(),
-            port
-        );
+    // 4. Create new reloadable state
+    let new_inner = Arc::new(ReloadableState {
+        config: new_config,
+        router: new_router,
+        provider_registry: new_registry,
+    });
 
-        let script_path = std::env::temp_dir().join("ccm_restart.bat");
-        fs::write(&script_path, script_content)?;
+    // 5. Atomic swap (write lock held for microseconds)
+    *state.inner.write().unwrap() = new_inner;
 
-        // Execute batch file
-        Command::new("cmd")
-            .args(&["/C", "start", "/B", script_path.to_str().unwrap()])
-            .spawn()?;
-    }
-
-    Ok(())
+    info!("✅ Configuration reloaded successfully");
+    Html("<div class='px-4 py-3 rounded-xl bg-green-500/20 border border-green-500/50 text-foreground text-sm'><strong>✅ Configuration reloaded</strong><br/>New settings are now active.</div>").into_response()
 }
 
 /// Handle /v1/chat/completions requests (OpenAI-compatible endpoint)
@@ -521,6 +485,9 @@ async fn handle_openai_chat_completions(
     let model = openai_request.model.clone();
     let start_time = std::time::Instant::now();
 
+    // Get snapshot of reloadable state
+    let inner = state.snapshot();
+
     // Streaming is not supported for /v1/chat/completions
     if openai_request.stream == Some(true) {
         return Err(AppError::ParseError(
@@ -533,13 +500,13 @@ async fn handle_openai_chat_completions(
         .map_err(|e| AppError::ParseError(format!("Failed to transform OpenAI request: {}", e)))?;
 
     // 2. Route the request (may modify system prompt to remove CCM-SUBAGENT-MODEL tag)
-    let decision = state
+    let decision = inner
         .router
         .route(&mut anthropic_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
+    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
 
         // Check for X-Provider header to override priority
         let forced_provider = headers
@@ -572,7 +539,7 @@ async fn handle_openai_chat_completions(
         // Try each mapping in priority order (or just the forced one)
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
             // Try to get provider from registry
-            if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
+            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
                 // Build retry indicator (only show if not first attempt)
                 let retry_info = if idx > 0 {
                     format!(" [{}/{}]", idx + 1, sorted_mappings.len())
@@ -653,7 +620,7 @@ async fn handle_openai_chat_completions(
         )));
     } else {
         // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = state.provider_registry.get_provider_for_model(&decision.model_name) {
+        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
             info!("📦 Using provider from registry (direct lookup): {}", decision.model_name);
 
             // Update model to routed model
@@ -735,6 +702,9 @@ async fn handle_messages(
         .unwrap_or("unknown");
     let start_time = std::time::Instant::now();
 
+    // Get snapshot of reloadable state
+    let inner = state.snapshot();
+
     // Generate trace ID for correlating request/response
     let trace_id = state.message_tracer.new_trace_id();
 
@@ -756,13 +726,13 @@ async fn handle_messages(
         })?;
 
     // 2. Route the request (may modify system prompt to remove CCM-SUBAGENT-MODEL tag)
-    let decision = state
+    let decision = inner
         .router
         .route(&mut request_for_routing)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
+    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
 
         // Check for X-Provider header to override priority
         let forced_provider = headers
@@ -795,7 +765,7 @@ async fn handle_messages(
         // Try each mapping in priority order (or just the forced one)
         for (idx, mapping) in sorted_mappings.iter().enumerate() {
             // Try to get provider from registry
-            if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
+            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
                 // Trust the model mapping configuration - no need to validate
 
                 // Parse request as Anthropic format
@@ -945,7 +915,7 @@ async fn handle_messages(
         )));
     } else {
         // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = state.provider_registry.get_provider_for_model(&decision.model_name) {
+        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
             info!("📦 Using provider from registry (direct lookup): {}", decision.model_name);
 
             // Parse request as Anthropic format
@@ -989,6 +959,9 @@ async fn handle_count_tokens(
     let model = request_json.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
     debug!("Received count_tokens request for model: {}", model);
 
+    // Get snapshot of reloadable state
+    let inner = state.snapshot();
+
     // 1. Parse as CountTokensRequest first
     use crate::models::CountTokensRequest;
     let count_request: CountTokensRequest = serde_json::from_value(request_json.clone())
@@ -1009,7 +982,7 @@ async fn handle_count_tokens(
         stream: None,
         metadata: None,
     };
-    let decision = state
+    let decision = inner
         .router
         .route(&mut routing_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
@@ -1020,7 +993,7 @@ async fn handle_count_tokens(
     );
 
     // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = state.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
+    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
         debug!("📋 Found {} provider mappings for token counting: {}", model_config.mappings.len(), decision.model_name);
 
         // Sort mappings by priority
@@ -1038,7 +1011,7 @@ async fn handle_count_tokens(
             );
 
             // Try to get provider from registry
-            if let Some(provider) = state.provider_registry.get_provider(&mapping.provider) {
+            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
                 // Trust the model mapping configuration - no need to validate
 
                 // Update model to actual model name
@@ -1070,7 +1043,7 @@ async fn handle_count_tokens(
         )));
     } else {
         // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = state.provider_registry.get_provider_for_model(&decision.model_name) {
+        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
             debug!("📦 Using provider from registry (direct lookup) for token counting: {}", decision.model_name);
 
             // Update model to routed model

@@ -74,6 +74,7 @@ This fork adds several significant improvements over the upstream project:
 - 🤖 **Multi-Agent Support** - Dynamic model switching via `CCM-SUBAGENT-MODEL` tags
 - 📊 **Live Testing** - Built-in test interface to verify routing and responses
 - ⚙️ **Centralized Settings** - Dedicated Settings tab for regex pattern management
+- 🔄 **Hot-Reload** - Config changes apply instantly without process restart
 
 ## Screenshots
 
@@ -411,9 +412,9 @@ Navigate to **Settings** tab for centralized regex management:
 
 ### Step 4: Save Configuration
 
-Click **"💾 Save to Server"** to save configuration to disk, or **"🔄 Save & Restart"** to save and restart the server.
+Click **"💾 Save"** to save configuration and hot-reload.
 
-> **Note**: Router configuration auto-saves to localStorage on change, but you need to click "Save to Server" to persist to disk.
+> **Note**: Router configuration auto-saves to localStorage on change, but you need to click "Save" to persist to disk and apply changes.
 
 ### Step 5: Test Your Setup
 
@@ -1083,7 +1084,7 @@ All three provide **FREE unlimited API access** to subscribers!
 3. Select provider type (Anthropic-compatible or OpenAI-compatible)
 4. Enter provider name, API key, and base URL
 5. Click **"Add Provider"**
-6. Click **"Save to Server"**
+6. Click **"Save"**
 </details>
 
 <details>
