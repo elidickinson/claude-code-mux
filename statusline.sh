@@ -33,7 +33,7 @@ fi
 
 # Strip date suffixes and get models in recency order (most recent first)
 STRIPPED=$(echo "$RECENT" | jq -r '.[]' | sed 's/-[0-9]\{8\}@/@/')
-UNIQUE_MODELS=$(echo "$STRIPPED" | awk 'seen[$0]==0 {print; seen[$0]=1}')
+UNIQUE_MODELS=$(echo "$STRIPPED" | awk 'seen[$0]==0 {print; seen[$0]=1; count++} count>=3 {exit}')
 
 # Build output: models in recency order, fixed-width bars show proportion
 BAR_WIDTH=10
