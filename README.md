@@ -286,7 +286,7 @@ ccm install-statusline
 
 Then configure in `~/.claude/settings.json` (installer shows exact config).
 
-Shows: `minimax-m2@minimax (default) 14:23:45`
+Shows: `claude-opus@anthropic ████ gpt-4@openai ██` (sparkline of last 20 requests)
 
 That's it! Your setup is complete.
 
@@ -796,7 +796,7 @@ inject_continuation_prompt = true  # Keeps the model working through tasks
 
 ### Statusline Script for Claude Code
 
-Claude Code Mux includes a statusline script that shows which model and provider are actually being used for each request.
+Claude Code Mux includes a statusline script that shows which models are being used with sparkline visualization.
 
 #### Installation
 
@@ -820,21 +820,19 @@ The installer will show you the exact configuration needed.
 
 #### What It Shows
 
-The statusline displays:
+The statusline displays a sparkline of the last 20 requests, sorted by frequency:
 ```
-model@provider (route-type) HH:MM:SS
+model@provider ████ model2@provider ██
 ```
+
+Each `█` represents one request. Models are sorted by usage count (most used first).
 
 **Examples:**
-- `minimax-m2@minimax (default) 14:23:45`
-- `kimi-k2-thinking@kimi (think) 09:15:32`
-- `glm-4.5-air@zai (background) 16:42:11`
+- `claude-opus@anthropic ████████` — 8 of last 20 requests went to Opus
+- `claude-opus@anthropic ████ gpt-4@openai ██` — Mixed usage across providers
+- `minimax-m2@minimax ██████████████████` — Single model dominance
 
-This shows:
-- Which model CCM actually routed to
-- Which provider handled the request
-- The routing decision type (default/think/background/web-search)
-- When the last request was made
+This gives you a quick visual sense of which models are handling your work.
 
 That's it! Claude Code will automatically use the statusline script when you start a new session.
 
