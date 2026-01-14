@@ -266,17 +266,20 @@ impl Router {
         }
     }
 
-    /// Match prompt rules against the last user message content
+    /// Match prompt rules against the turn-starting user message content
     /// Returns (model_name, matched_text) if a rule matches, None otherwise
     /// Strips the matched phrase from the prompt if strip_match is true
     /// For dynamic rules (model contains $refs), expands capture groups in the model name
+    ///
+    /// NOTE: We check the turn-starting message (not just the last user message) so that
+    /// prompt phrases like "OPUS" persist for the entire turn, even through tool calls.
     fn match_prompt_rule(&self, request: &mut AnthropicRequest) -> Option<(String, String)> {
         if self.prompt_rules.is_empty() {
             return None;
         }
 
-        // Extract last user message content
-        let user_content = self.extract_last_user_message(request)?;
+        // Extract turn-starting user message content (persists through tool calls)
+        let user_content = self.extract_turn_starting_user_message(request)?;
 
         // Check each rule in order (first match wins)
         for rule in &self.prompt_rules {
@@ -300,9 +303,9 @@ impl Router {
                     rule.strip_match
                 );
 
-                // Strip the matched phrase from the last user message if requested
+                // Strip the matched phrase from the turn-starting message if requested
                 if rule.strip_match {
-                    self.strip_match_from_last_user_message(request, &rule.regex);
+                    self.strip_match_from_turn_starting_message(request, &rule.regex);
                 }
 
                 return Some((model_name, matched_text));
@@ -348,36 +351,147 @@ impl Router {
         }
     }
 
-    /// Strip the matched phrase from the last user message
-    fn strip_match_from_last_user_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
-        // Find the last user message (mutable)
-        let last_user = request
-            .messages
-            .iter_mut()
-            .rev()
-            .find(|m| m.role == "user");
+    /// Extract the text content from the turn-starting user message
+    ///
+    /// A "turn" starts when:
+    /// 1. The conversation begins, OR
+    /// 2. After an assistant message that has no tool_use (i.e., the previous turn ended)
+    ///
+    /// This allows prompt phrases like "OPUS" to persist throughout a turn,
+    /// even when the model makes tool calls and the last user message is just tool results.
+    fn extract_turn_starting_user_message(&self, request: &AnthropicRequest) -> Option<String> {
+        use crate::models::ContentBlock;
 
-        if let Some(msg) = last_user {
-            match &mut msg.content {
+        // Find the index where the current turn starts
+        // Work backwards to find the last assistant message without tool_use
+        let mut turn_start_idx = 0;
+
+        for (idx, msg) in request.messages.iter().enumerate().rev() {
+            if msg.role == "assistant" {
+                // Check if this assistant message has any tool_use blocks
+                let has_tool_use = match &msg.content {
+                    MessageContent::Text(_) => false,
+                    MessageContent::Blocks(blocks) => blocks.iter().any(|block| {
+                        matches!(
+                            block,
+                            ContentBlock::Known(crate::models::KnownContentBlock::ToolUse { .. })
+                        )
+                    }),
+                };
+
+                if !has_tool_use {
+                    // This assistant message ends the previous turn
+                    // Current turn starts after this message
+                    turn_start_idx = idx + 1;
+                    break;
+                }
+            }
+        }
+
+        // Find the first user message with text content from turn_start_idx onwards
+        for msg in request.messages.iter().skip(turn_start_idx) {
+            if msg.role != "user" {
+                continue;
+            }
+
+            // Check if this user message has text content (not just tool_result)
+            let text_content = match &msg.content {
                 MessageContent::Text(text) => {
-                    let stripped = regex.replace_all(text, "").to_string();
-                    if stripped != *text {
-                        debug!("🔪 Stripped matched phrase from prompt");
-                        *text = stripped;
+                    if !text.trim().is_empty() {
+                        Some(text.clone())
+                    } else {
+                        None
                     }
                 }
                 MessageContent::Blocks(blocks) => {
-                    // Strip from all text blocks
-                    for block in blocks.iter_mut() {
-                        if let Some(text) = block.as_text_mut() {
-                            let stripped = regex.replace_all(text, "").to_string();
-                            if stripped != *text {
-                                debug!("🔪 Stripped matched phrase from prompt block");
-                                *text = stripped;
+                    // Get text blocks (excluding tool_result)
+                    let text: String = blocks
+                        .iter()
+                        .filter_map(|block| block.as_text().map(|s| s.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(text)
+                    }
+                }
+            };
+
+            if text_content.is_some() {
+                return text_content;
+            }
+        }
+
+        // Fallback to last user message if no turn-starting message found
+        self.extract_last_user_message(request)
+    }
+
+    /// Strip the matched phrase from the turn-starting user message
+    fn strip_match_from_turn_starting_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
+        use crate::models::ContentBlock;
+
+        // Find the index where the current turn starts (same logic as extract_turn_starting_user_message)
+        let mut turn_start_idx = 0;
+
+        for (idx, msg) in request.messages.iter().enumerate().rev() {
+            if msg.role == "assistant" {
+                let has_tool_use = match &msg.content {
+                    MessageContent::Text(_) => false,
+                    MessageContent::Blocks(blocks) => blocks.iter().any(|block| {
+                        matches!(
+                            block,
+                            ContentBlock::Known(crate::models::KnownContentBlock::ToolUse { .. })
+                        )
+                    }),
+                };
+
+                if !has_tool_use {
+                    turn_start_idx = idx + 1;
+                    break;
+                }
+            }
+        }
+
+        // Find the first user message with text content from turn_start_idx onwards
+        for msg in request.messages.iter_mut().skip(turn_start_idx) {
+            if msg.role != "user" {
+                continue;
+            }
+
+            // Check if this message has text content and strip from it
+            let has_text = match &msg.content {
+                MessageContent::Text(text) => !text.trim().is_empty(),
+                MessageContent::Blocks(blocks) => {
+                    blocks.iter().any(|block| {
+                        block.as_text().map(|s| !s.trim().is_empty()).unwrap_or(false)
+                    })
+                }
+            };
+
+            if has_text {
+                // This is the turn-starting message, strip from it
+                match &mut msg.content {
+                    MessageContent::Text(text) => {
+                        let stripped = regex.replace_all(text, "").to_string();
+                        if stripped != *text {
+                            debug!("🔪 Stripped matched phrase from turn-starting prompt");
+                            *text = stripped;
+                        }
+                    }
+                    MessageContent::Blocks(blocks) => {
+                        for block in blocks.iter_mut() {
+                            if let Some(text) = block.as_text_mut() {
+                                let stripped = regex.replace_all(text, "").to_string();
+                                if stripped != *text {
+                                    debug!("🔪 Stripped matched phrase from turn-starting prompt block");
+                                    *text = stripped;
+                                }
                             }
                         }
                     }
                 }
+                return; // Only strip from the first (turn-starting) message
             }
         }
     }
@@ -774,5 +888,199 @@ mod tests {
         assert!(super::contains_capture_reference("prefix-$1-suffix"));
         assert!(!super::contains_capture_reference("static-model"));
         assert!(!super::contains_capture_reference("no-refs-here"));
+    }
+
+    #[test]
+    fn test_prompt_rule_persists_through_tool_calls() {
+        // Test that prompt phrases "stick" for the entire turn, even after tool calls
+        use crate::cli::PromptRule;
+        use crate::models::{ContentBlock, KnownContentBlock, ToolResultContent};
+
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"(?i)OPUS".to_string(),
+            model: "opus-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        // Simulate a turn with tool calls:
+        // 1. User: "OPUS write me a test suite"
+        // 2. Assistant: [tool_use: Read]
+        // 3. User: [tool_result: file contents]
+        let mut request = AnthropicRequest {
+            model: "claude-opus-4".to_string(),
+            messages: vec![
+                // Turn-starting user message with prompt phrase
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text("OPUS write me a test suite".to_string()),
+                },
+                // Assistant response with tool_use
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Blocks(vec![
+                        ContentBlock::Known(KnownContentBlock::ToolUse {
+                            id: "tool_1".to_string(),
+                            name: "Read".to_string(),
+                            input: serde_json::json!({"file_path": "/src/main.rs"}),
+                        }),
+                    ]),
+                },
+                // User message with only tool_result (no text)
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Blocks(vec![
+                        ContentBlock::Known(KnownContentBlock::ToolResult {
+                            tool_use_id: "tool_1".to_string(),
+                            content: ToolResultContent::Text("fn main() {}".to_string()),
+                            is_error: false,
+                            cache_control: None,
+                        }),
+                    ]),
+                },
+            ],
+            max_tokens: 1024,
+            thinking: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: None,
+            metadata: None,
+            system: None,
+            tools: None,
+        };
+
+        let decision = router.route(&mut request).unwrap();
+        // Should match the "OPUS" from the turn-starting message, not the tool_result
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "opus-model");
+    }
+
+    #[test]
+    fn test_prompt_rule_resets_after_turn_ends() {
+        // Test that prompt phrases reset when a new turn starts
+        // (after an assistant message without tool_use)
+        use crate::cli::PromptRule;
+
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"(?i)OPUS".to_string(),
+            model: "opus-model".to_string(),
+            strip_match: false,
+        }];
+        let router = Router::new(config);
+
+        // Simulate two turns:
+        // Turn 1: User: "OPUS write me tests" → Assistant: "Here are the tests..."
+        // Turn 2: User: "Now add documentation" (no OPUS)
+        let mut request = AnthropicRequest {
+            model: "claude-opus-4".to_string(),
+            messages: vec![
+                // Turn 1: User with OPUS
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text("OPUS write me tests".to_string()),
+                },
+                // Turn 1: Assistant response (text only, no tool_use - ends the turn)
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Text("Here are the tests...".to_string()),
+                },
+                // Turn 2: User without OPUS (new turn)
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text("Now add documentation".to_string()),
+                },
+            ],
+            max_tokens: 1024,
+            thinking: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: None,
+            metadata: None,
+            system: None,
+            tools: None,
+        };
+
+        let decision = router.route(&mut request).unwrap();
+        // Should NOT match "OPUS" because it was in the previous turn
+        // The current turn started with "Now add documentation"
+        assert_eq!(decision.route_type, RouteType::Default);
+        assert_eq!(decision.model_name, "default.model");
+    }
+
+    #[test]
+    fn test_prompt_rule_strip_match_in_multi_turn() {
+        // Test that strip_match works on the turn-starting message in a multi-message turn
+        use crate::cli::PromptRule;
+        use crate::models::{ContentBlock, KnownContentBlock, ToolResultContent};
+
+        let mut config = create_test_config();
+        config.router.prompt_rules = vec![PromptRule {
+            pattern: r"\[OPUS\]".to_string(),
+            model: "opus-model".to_string(),
+            strip_match: true,
+        }];
+        let router = Router::new(config);
+
+        let mut request = AnthropicRequest {
+            model: "claude-opus-4".to_string(),
+            messages: vec![
+                // Turn-starting message with [OPUS] tag
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Text("[OPUS] write me tests".to_string()),
+                },
+                // Assistant with tool_use
+                Message {
+                    role: "assistant".to_string(),
+                    content: MessageContent::Blocks(vec![
+                        ContentBlock::Known(KnownContentBlock::ToolUse {
+                            id: "tool_1".to_string(),
+                            name: "Read".to_string(),
+                            input: serde_json::json!({}),
+                        }),
+                    ]),
+                },
+                // User with tool_result
+                Message {
+                    role: "user".to_string(),
+                    content: MessageContent::Blocks(vec![
+                        ContentBlock::Known(KnownContentBlock::ToolResult {
+                            tool_use_id: "tool_1".to_string(),
+                            content: ToolResultContent::Text("content".to_string()),
+                            is_error: false,
+                            cache_control: None,
+                        }),
+                    ]),
+                },
+            ],
+            max_tokens: 1024,
+            thinking: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: None,
+            metadata: None,
+            system: None,
+            tools: None,
+        };
+
+        let decision = router.route(&mut request).unwrap();
+        assert_eq!(decision.route_type, RouteType::PromptRule);
+        assert_eq!(decision.model_name, "opus-model");
+
+        // Verify [OPUS] was stripped from the first (turn-starting) message
+        if let MessageContent::Text(text) = &request.messages[0].content {
+            assert!(!text.contains("[OPUS]"));
+            assert!(text.contains("write me tests"));
+        } else {
+            panic!("Expected text content in first message");
+        }
     }
 }
