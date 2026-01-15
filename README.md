@@ -837,6 +837,28 @@ This gives you a quick visual sense of which models are handling your work.
 
 That's it! Claude Code will automatically use the statusline script when you start a new session.
 
+### Shell Function: `claudemux`
+
+For convenience, add a shell function that launches Claude Code with CCM and clears statusline history:
+
+```bash
+# Add to ~/.zshrc or ~/.bashrc
+claudemux() {
+    rm -f ~/.claude-code-mux/last_routing.json
+    ANTHROPIC_BASE_URL="http://127.0.0.1:13456" \
+    ANTHROPIC_API_KEY="any-string" \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
+    claude --allow-dangerously-skip-permissions --model default "$@"
+}
+```
+
+This function:
+- Clears the statusline history (`last_routing.json`) for a fresh session view
+- Routes all requests through CCM (`ANTHROPIC_BASE_URL`)
+- Disables telemetry and error reporting
+- Passes any arguments to `claude` (e.g., `claudemux --resume`)
+
 ### Message Tracing
 
 Log full request/response messages to JSONL for debugging:

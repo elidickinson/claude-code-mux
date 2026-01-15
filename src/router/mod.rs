@@ -359,12 +359,8 @@ impl Router {
     ///
     /// This allows prompt phrases like "OPUS" to persist throughout a turn,
     /// even when the model makes tool calls and the last user message is just tool results.
-    fn extract_turn_starting_user_message(&self, request: &AnthropicRequest) -> Option<String> {
+    fn find_turn_start_index(&self, request: &AnthropicRequest) -> usize {
         use crate::models::ContentBlock;
-
-        // Find the index where the current turn starts
-        // Work backwards to find the last assistant message without tool_use
-        let mut turn_start_idx = 0;
 
         for (idx, msg) in request.messages.iter().enumerate().rev() {
             if msg.role == "assistant" {
@@ -382,11 +378,16 @@ impl Router {
                 if !has_tool_use {
                     // This assistant message ends the previous turn
                     // Current turn starts after this message
-                    turn_start_idx = idx + 1;
-                    break;
+                    return idx + 1;
                 }
             }
         }
+
+        0 // No assistant message found, start from beginning
+    }
+
+    fn extract_turn_starting_user_message(&self, request: &AnthropicRequest) -> Option<String> {
+        let turn_start_idx = self.find_turn_start_index(request);
 
         // Find the first user message with text content from turn_start_idx onwards
         for msg in request.messages.iter().skip(turn_start_idx) {
@@ -429,29 +430,7 @@ impl Router {
 
     /// Strip the matched phrase from the turn-starting user message
     fn strip_match_from_turn_starting_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
-        use crate::models::ContentBlock;
-
-        // Find the index where the current turn starts (same logic as extract_turn_starting_user_message)
-        let mut turn_start_idx = 0;
-
-        for (idx, msg) in request.messages.iter().enumerate().rev() {
-            if msg.role == "assistant" {
-                let has_tool_use = match &msg.content {
-                    MessageContent::Text(_) => false,
-                    MessageContent::Blocks(blocks) => blocks.iter().any(|block| {
-                        matches!(
-                            block,
-                            ContentBlock::Known(crate::models::KnownContentBlock::ToolUse { .. })
-                        )
-                    }),
-                };
-
-                if !has_tool_use {
-                    turn_start_idx = idx + 1;
-                    break;
-                }
-            }
-        }
+        let turn_start_idx = self.find_turn_start_index(request);
 
         // Find the first user message with text content from turn_start_idx onwards
         for msg in request.messages.iter_mut().skip(turn_start_idx) {
@@ -470,28 +449,62 @@ impl Router {
             };
 
             if has_text {
-                // This is the turn-starting message, strip from it
+                // This is the turn-starting message, strip from it and return
                 match &mut msg.content {
                     MessageContent::Text(text) => {
-                        let stripped = regex.replace_all(text, "").to_string();
-                        if stripped != *text {
+                        let new_text = regex.replace_all(text, "").to_string();
+                        if new_text != *text {
                             debug!("🔪 Stripped matched phrase from turn-starting prompt");
-                            *text = stripped;
+                            *text = new_text;
                         }
                     }
                     MessageContent::Blocks(blocks) => {
                         for block in blocks.iter_mut() {
                             if let Some(text) = block.as_text_mut() {
-                                let stripped = regex.replace_all(text, "").to_string();
-                                if stripped != *text {
+                                let new_text = regex.replace_all(text, "").to_string();
+                                if new_text != *text {
                                     debug!("🔪 Stripped matched phrase from turn-starting prompt block");
-                                    *text = stripped;
+                                    *text = new_text;
                                 }
                             }
                         }
                     }
                 }
-                return; // Only strip from the first (turn-starting) message
+                return;
+            }
+        }
+
+        // Fallback: strip from last user message if no turn-starting message found
+        // (matches the fallback behavior in extract_turn_starting_user_message)
+        self.strip_match_from_last_user_message(request, regex);
+    }
+
+    /// Strip the matched phrase from the last user message (fallback for edge cases)
+    fn strip_match_from_last_user_message(&self, request: &mut AnthropicRequest, regex: &Regex) {
+        // Find the last user message (mutable)
+        let last_user = request.messages.iter_mut().rev().find(|m| m.role == "user");
+
+        if let Some(msg) = last_user {
+            match &mut msg.content {
+                MessageContent::Text(text) => {
+                    let stripped = regex.replace_all(text, "").to_string();
+                    if stripped != *text {
+                        debug!("🔪 Stripped matched phrase from prompt");
+                        *text = stripped;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    // Strip from all text blocks
+                    for block in blocks.iter_mut() {
+                        if let Some(text) = block.as_text_mut() {
+                            let stripped = regex.replace_all(text, "").to_string();
+                            if stripped != *text {
+                                debug!("🔪 Stripped matched phrase from prompt block");
+                                *text = stripped;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
