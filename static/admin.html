@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code Mux - Admin</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+        .tab-active { color: #3182f6; font-weight: 600; background: #eff6ff; }
+        .btn { padding: 10px 16px; border-radius: 8px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+        .btn-primary { background: #3182f6; color: white; }
+        .btn-primary:hover { background: #1b64da; }
+        .btn-secondary { background: #f3f4f6; color: #4b5563; }
+        .btn-secondary:hover { background: #e5e7eb; }
+        .btn-danger { background: #fee2e2; color: #dc2626; }
+        .btn-danger:hover { background: #fecaca; }
+        .card { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .input { width: 100%; padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 8px; }
+        .input:focus { outline: none; border-color: #3182f6; box-shadow: 0 0 0 2px rgba(49,130,246,0.1); }
+        .label { font-size: 14px; font-weight: 500; color: #374151; margin-bottom: 6px; display: block; }
+        select.input { appearance: none; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 10px center/16px; }
+        .hidden { display: none !important; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
+        .badge-green { background: #dcfce7; color: #166534; }
+        .badge-gray { background: #f3f4f6; color: #6b7280; }
+        .toast { position: fixed; top: 16px; right: 16px; padding: 12px 20px; border-radius: 8px; z-index: 1000; animation: slideIn 0.3s; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="flex">
+        <!-- Sidebar -->
+        <aside class="w-56 bg-white border-r min-h-screen p-4 sticky top-0">
+            <h1 class="text-lg font-bold mb-1">Claude Code Mux</h1>
+            <p class="text-xs text-gray-500 mb-6">Admin</p>
+            <nav class="space-y-1" id="nav">
+                <button onclick="showTab('overview')" data-tab="overview" class="tab-active w-full text-left px-3 py-2 rounded-lg text-sm">Overview</button>
+                <button onclick="showTab('providers')" data-tab="providers" class="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Providers</button>
+                <button onclick="showTab('models')" data-tab="models" class="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Models</button>
+                <button onclick="showTab('router')" data-tab="router" class="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Router</button>
+                <button onclick="showTab('settings')" data-tab="settings" class="w-full text-left px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50">Settings</button>
+            </nav>
+            <div class="absolute bottom-4 left-4 right-4 space-y-2">
+                <button onclick="saveConfig()" class="btn btn-primary w-full text-sm">Save</button>
+                <button onclick="saveAndReload()" class="btn btn-secondary w-full text-sm">Save & Reload</button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 p-6">
+            <!-- Overview Tab -->
+            <div id="tab-overview" class="tab-content">
+                <h2 class="text-xl font-bold mb-4">Overview</h2>
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="card"><div class="text-2xl font-bold" id="stat-providers">0</div><div class="text-sm text-gray-500">Providers</div></div>
+                    <div class="card"><div class="text-2xl font-bold" id="stat-models">0</div><div class="text-sm text-gray-500">Models</div></div>
+                    <div class="card"><div class="text-2xl font-bold" id="stat-default">-</div><div class="text-sm text-gray-500">Default Model</div></div>
+                </div>
+                <div class="card">
+                    <h3 class="font-semibold mb-3">Quick Setup</h3>
+                    <p class="text-sm text-gray-600 mb-4">Configure your default routing model:</p>
+                    <div class="flex gap-2">
+                        <select id="quick-default" class="input flex-1"></select>
+                        <button onclick="setQuickDefault()" class="btn btn-primary">Set Default</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Providers Tab -->
+            <div id="tab-providers" class="tab-content hidden">
+                <div id="providers-list">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">Providers</h2>
+                        <button onclick="showAddProvider()" class="btn btn-primary text-sm">+ Add Provider</button>
+                    </div>
+                    <div id="providers-grid" class="space-y-3"></div>
+                </div>
+                <div id="providers-form" class="hidden">
+                    <div class="flex items-center gap-2 mb-4">
+                        <button onclick="hideAddProvider()" class="text-gray-500 hover:text-gray-700">&larr;</button>
+                        <h2 class="text-xl font-bold" id="provider-form-title">Add Provider</h2>
+                    </div>
+                    <div class="card space-y-4">
+                        <div>
+                            <label class="label">Provider Type</label>
+                            <select id="provider-type" class="input" onchange="onProviderTypeChange()">
+                                <optgroup label="Anthropic-compatible">
+                                    <option value="anthropic">Anthropic (Official)</option>
+                                    <option value="z.ai">Z.AI (GLM models)</option>
+                                    <option value="minimax">Minimax</option>
+                                    <option value="kimi-coding">Kimi Coding</option>
+                                    <option value="zenmux">Zenmux</option>
+                                </optgroup>
+                                <optgroup label="OpenAI-compatible">
+                                    <option value="openai">OpenAI (Official)</option>
+                                    <option value="openrouter">OpenRouter</option>
+                                    <option value="groq">Groq</option>
+                                    <option value="together">Together AI</option>
+                                    <option value="fireworks">Fireworks AI</option>
+                                    <option value="deepinfra">DeepInfra</option>
+                                    <option value="cerebras">Cerebras</option>
+                                    <option value="moonshot">Moonshot</option>
+                                    <option value="nebius">Nebius</option>
+                                    <option value="novita">Novita</option>
+                                    <option value="baseten">Baseten</option>
+                                </optgroup>
+                                <optgroup label="Google">
+                                    <option value="gemini">Gemini</option>
+                                    <option value="vertex-ai">Vertex AI</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="label">Name</label>
+                            <input type="text" id="provider-name" class="input" placeholder="my-provider">
+                        </div>
+                        <div id="vertex-fields" class="hidden space-y-4">
+                            <div><label class="label">Project ID</label><input type="text" id="provider-project" class="input" placeholder="my-gcp-project"></div>
+                            <div><label class="label">Location</label><input type="text" id="provider-location" class="input" placeholder="us-central1"></div>
+                        </div>
+                        <div id="api-key-field">
+                            <label class="label">API Key</label>
+                            <input type="password" id="provider-apikey" class="input" placeholder="sk-...">
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <input type="checkbox" id="provider-enabled" checked>
+                            <label for="provider-enabled" class="text-sm">Enabled</label>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="saveProvider()" class="btn btn-primary">Save Provider</button>
+                            <button onclick="hideAddProvider()" class="btn btn-secondary">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Models Tab -->
+            <div id="tab-models" class="tab-content hidden">
+                <div id="models-list">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">Models</h2>
+                        <button onclick="showAddModel()" class="btn btn-primary text-sm">+ Add Model</button>
+                    </div>
+                    <div id="models-grid" class="space-y-3"></div>
+                </div>
+                <div id="models-form" class="hidden">
+                    <div class="flex items-center gap-2 mb-4">
+                        <button onclick="hideAddModel()" class="text-gray-500 hover:text-gray-700">&larr;</button>
+                        <h2 class="text-xl font-bold" id="model-form-title">Add Model</h2>
+                    </div>
+                    <div class="card space-y-4">
+                        <div>
+                            <label class="label">Model Name</label>
+                            <input type="text" id="model-name" class="input" placeholder="my-model">
+                            <p class="text-xs text-gray-500 mt-1">This is the name you'll use in your config (e.g., default, think)</p>
+                        </div>
+                        <div>
+                            <label class="label">Provider Mappings</label>
+                            <div id="model-mappings" class="space-y-2"></div>
+                            <button onclick="addMapping()" class="btn btn-secondary text-sm mt-2">+ Add Mapping</button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="saveModel()" class="btn btn-primary">Save Model</button>
+                            <button onclick="hideAddModel()" class="btn btn-secondary">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Router Tab -->
+            <div id="tab-router" class="tab-content hidden">
+                <h2 class="text-xl font-bold mb-4">Router Configuration</h2>
+                <div class="card space-y-4">
+                    <div>
+                        <label class="label">Default Model</label>
+                        <select id="router-default" class="input" onchange="updateRouter()"></select>
+                        <p class="text-xs text-gray-500 mt-1">Used when no other routing rules match</p>
+                    </div>
+                    <div>
+                        <label class="label">Think Model (Plan Mode)</label>
+                        <select id="router-think" class="input" onchange="updateRouter()"><option value="">None</option></select>
+                        <p class="text-xs text-gray-500 mt-1">Used when thinking/reasoning is enabled</p>
+                    </div>
+                    <div>
+                        <label class="label">Background Model</label>
+                        <select id="router-background" class="input" onchange="updateRouter()"><option value="">None</option></select>
+                        <p class="text-xs text-gray-500 mt-1">Used for background tasks (e.g., haiku requests)</p>
+                    </div>
+                    <div>
+                        <label class="label">WebSearch Model</label>
+                        <select id="router-websearch" class="input" onchange="updateRouter()"><option value="">None</option></select>
+                        <p class="text-xs text-gray-500 mt-1">Used when web_search tool is present</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div id="tab-settings" class="tab-content hidden">
+                <h2 class="text-xl font-bold mb-4">Settings</h2>
+                <div class="card space-y-4">
+                    <div>
+                        <label class="label">Auto-map Regex</label>
+                        <input type="text" id="settings-automap" class="input" placeholder="^claude-" onchange="updateSettings()">
+                        <p class="text-xs text-gray-500 mt-1">Models matching this pattern are auto-mapped to default</p>
+                    </div>
+                    <div>
+                        <label class="label">Background Regex</label>
+                        <input type="text" id="settings-background" class="input" placeholder="(?i)claude.*haiku" onchange="updateSettings()">
+                        <p class="text-xs text-gray-500 mt-1">Models matching this pattern use background routing</p>
+                    </div>
+                </div>
+                <div class="card mt-4">
+                    <h3 class="font-semibold mb-3">OAuth Tokens</h3>
+                    <div id="oauth-tokens" class="space-y-2"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // State
+        const state = { config: null, editingProvider: null, editingModel: null, mappingCount: 1 };
+
+        // Utils
+        const $ = id => document.getElementById(id);
+        const toast = (msg, type = 'success') => {
+            const div = document.createElement('div');
+            div.className = `toast ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
+            div.textContent = msg;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 3000);
+        };
+
+        // Tab Navigation
+        function showTab(name) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('#nav button').forEach(el => {
+                el.classList.remove('tab-active');
+                el.classList.add('text-gray-600');
+            });
+            $('tab-' + name)?.classList.remove('hidden');
+            document.querySelector(`[data-tab="${name}"]`)?.classList.add('tab-active');
+            document.querySelector(`[data-tab="${name}"]`)?.classList.remove('text-gray-600');
+            history.replaceState({}, '', '?tab=' + name);
+            if (name === 'providers') renderProviders();
+            if (name === 'models') renderModels();
+            if (name === 'router') renderRouter();
+            if (name === 'settings') renderSettings();
+            if (name === 'overview') renderOverview();
+        }
+
+        // Load config from server
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config/json');
+                state.config = await res.json();
+                state.config.providers = state.config.providers || [];
+                state.config.models = state.config.models || [];
+                state.config.router = state.config.router || { default: '' };
+                renderOverview();
+            } catch (e) {
+                toast('Failed to load config', 'error');
+            }
+        }
+
+        // Save config to server
+        async function saveConfig() {
+            try {
+                const res = await fetch('/api/config/json', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(state.config)
+                });
+                if (res.ok) toast('Configuration saved');
+                else toast('Save failed', 'error');
+            } catch (e) {
+                toast('Save failed', 'error');
+            }
+        }
+
+        async function saveAndReload() {
+            await saveConfig();
+            try {
+                await fetch('/api/reload', { method: 'POST' });
+                toast('Configuration reloaded');
+            } catch (e) {
+                toast('Reload failed', 'error');
+            }
+        }
+
+        // Overview
+        function renderOverview() {
+            if (!state.config) return;
+            $('stat-providers').textContent = state.config.providers?.filter(p => p.enabled !== false).length || 0;
+            $('stat-models').textContent = state.config.models?.length || 0;
+            $('stat-default').textContent = state.config.router?.default || '-';
+            populateModelSelect('quick-default');
+        }
+
+        function setQuickDefault() {
+            const model = $('quick-default').value;
+            if (model && state.config.router) {
+                state.config.router.default = model;
+                renderOverview();
+                toast('Default model updated (save to apply)');
+            }
+        }
+
+        // Providers
+        function renderProviders() {
+            const grid = $('providers-grid');
+            const providers = state.config?.providers || [];
+            if (!providers.length) {
+                grid.innerHTML = '<div class="card text-center text-gray-500 py-8">No providers configured. Click "Add Provider" to get started.</div>';
+                return;
+            }
+            grid.innerHTML = providers.map((p, i) => `
+                <div class="card flex justify-between items-center">
+                    <div>
+                        <div class="font-medium">${esc(p.name)}</div>
+                        <div class="text-sm text-gray-500">${esc(p.provider_type)} ${p.enabled === false ? '<span class="badge badge-gray">Disabled</span>' : '<span class="badge badge-green">Active</span>'}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="editProvider(${i})" class="btn btn-secondary text-sm">Edit</button>
+                        <button onclick="deleteProvider(${i})" class="btn btn-danger text-sm">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showAddProvider() {
+            state.editingProvider = null;
+            $('provider-form-title').textContent = 'Add Provider';
+            $('provider-type').value = 'anthropic';
+            $('provider-name').value = '';
+            $('provider-apikey').value = '';
+            $('provider-enabled').checked = true;
+            $('provider-project').value = '';
+            $('provider-location').value = '';
+            onProviderTypeChange();
+            $('providers-list').classList.add('hidden');
+            $('providers-form').classList.remove('hidden');
+        }
+
+        function hideAddProvider() {
+            $('providers-list').classList.remove('hidden');
+            $('providers-form').classList.add('hidden');
+            renderProviders();
+        }
+
+        function editProvider(idx) {
+            const p = state.config.providers[idx];
+            state.editingProvider = idx;
+            $('provider-form-title').textContent = 'Edit Provider';
+            $('provider-type').value = p.provider_type;
+            $('provider-name').value = p.name;
+            $('provider-apikey').value = p.api_key || '';
+            $('provider-enabled').checked = p.enabled !== false;
+            $('provider-project').value = p.project_id || '';
+            $('provider-location').value = p.location || '';
+            onProviderTypeChange();
+            $('providers-list').classList.add('hidden');
+            $('providers-form').classList.remove('hidden');
+        }
+
+        function onProviderTypeChange() {
+            const type = $('provider-type').value;
+            $('vertex-fields').classList.toggle('hidden', type !== 'vertex-ai');
+            $('api-key-field').classList.toggle('hidden', type === 'vertex-ai');
+        }
+
+        function saveProvider() {
+            const provider = {
+                name: $('provider-name').value.trim(),
+                provider_type: $('provider-type').value,
+                auth_type: 'api_key',
+                api_key: $('provider-apikey').value.trim() || undefined,
+                enabled: $('provider-enabled').checked,
+                models: []
+            };
+            if ($('provider-type').value === 'vertex-ai') {
+                provider.project_id = $('provider-project').value.trim();
+                provider.location = $('provider-location').value.trim();
+                delete provider.api_key;
+            }
+            if (!provider.name) { toast('Name required', 'error'); return; }
+            if (state.editingProvider !== null) {
+                state.config.providers[state.editingProvider] = provider;
+            } else {
+                state.config.providers.push(provider);
+            }
+            hideAddProvider();
+            toast('Provider saved (save config to apply)');
+        }
+
+        function deleteProvider(idx) {
+            if (confirm('Delete this provider?')) {
+                state.config.providers.splice(idx, 1);
+                renderProviders();
+                toast('Provider deleted (save config to apply)');
+            }
+        }
+
+        // Models
+        function renderModels() {
+            const grid = $('models-grid');
+            const models = state.config?.models || [];
+            if (!models.length) {
+                grid.innerHTML = '<div class="card text-center text-gray-500 py-8">No models configured. Click "Add Model" to get started.</div>';
+                return;
+            }
+            grid.innerHTML = models.map((m, i) => `
+                <div class="card flex justify-between items-center">
+                    <div>
+                        <div class="font-medium">${esc(m.name)}</div>
+                        <div class="text-sm text-gray-500">${m.mappings?.length || 0} mapping(s)</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick="editModel(${i})" class="btn btn-secondary text-sm">Edit</button>
+                        <button onclick="deleteModel(${i})" class="btn btn-danger text-sm">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showAddModel() {
+            state.editingModel = null;
+            state.mappingCount = 1;
+            $('model-form-title').textContent = 'Add Model';
+            $('model-name').value = '';
+            renderMappings([{ provider: '', actual_model: '', priority: 1 }]);
+            $('models-list').classList.add('hidden');
+            $('models-form').classList.remove('hidden');
+        }
+
+        function hideAddModel() {
+            $('models-list').classList.remove('hidden');
+            $('models-form').classList.add('hidden');
+            renderModels();
+        }
+
+        function editModel(idx) {
+            const m = state.config.models[idx];
+            state.editingModel = idx;
+            state.mappingCount = m.mappings?.length || 1;
+            $('model-form-title').textContent = 'Edit Model';
+            $('model-name').value = m.name;
+            renderMappings(m.mappings || [{ provider: '', actual_model: '', priority: 1 }]);
+            $('models-list').classList.add('hidden');
+            $('models-form').classList.remove('hidden');
+        }
+
+        function renderMappings(mappings) {
+            const container = $('model-mappings');
+            const providers = state.config?.providers || [];
+            container.innerHTML = mappings.map((m, i) => `
+                <div class="flex gap-2 items-center p-3 bg-gray-50 rounded-lg">
+                    <select class="input flex-1" id="mapping-provider-${i}">
+                        <option value="">Select provider</option>
+                        ${providers.map(p => `<option value="${esc(p.name)}" ${m.provider === p.name ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+                    </select>
+                    <input type="text" class="input flex-1" id="mapping-model-${i}" placeholder="actual-model-name" value="${esc(m.actual_model || '')}">
+                    <input type="number" class="input w-16" id="mapping-priority-${i}" value="${m.priority || i + 1}" min="1">
+                    ${i > 0 ? `<button onclick="removeMapping(${i})" class="text-red-500 hover:text-red-700">&times;</button>` : ''}
+                </div>
+            `).join('');
+            state.mappingCount = mappings.length;
+        }
+
+        function addMapping() {
+            const container = $('model-mappings');
+            const currentMappings = collectMappings();
+            currentMappings.push({ provider: '', actual_model: '', priority: currentMappings.length + 1 });
+            renderMappings(currentMappings);
+        }
+
+        function removeMapping(idx) {
+            const currentMappings = collectMappings();
+            currentMappings.splice(idx, 1);
+            renderMappings(currentMappings);
+        }
+
+        function collectMappings() {
+            const mappings = [];
+            for (let i = 0; i < state.mappingCount; i++) {
+                const provider = $(`mapping-provider-${i}`)?.value;
+                const model = $(`mapping-model-${i}`)?.value;
+                const priority = parseInt($(`mapping-priority-${i}`)?.value) || i + 1;
+                if (provider || model) mappings.push({ provider, actual_model: model, priority });
+            }
+            return mappings;
+        }
+
+        function saveModel() {
+            const name = $('model-name').value.trim();
+            if (!name) { toast('Model name required', 'error'); return; }
+            const mappings = collectMappings().filter(m => m.provider && m.actual_model);
+            if (!mappings.length) { toast('At least one mapping required', 'error'); return; }
+            const model = { name, mappings };
+            if (state.editingModel !== null) {
+                state.config.models[state.editingModel] = model;
+            } else {
+                state.config.models.push(model);
+            }
+            hideAddModel();
+            toast('Model saved (save config to apply)');
+        }
+
+        function deleteModel(idx) {
+            if (confirm('Delete this model?')) {
+                state.config.models.splice(idx, 1);
+                renderModels();
+                toast('Model deleted (save config to apply)');
+            }
+        }
+
+        // Router
+        function populateModelSelect(id, selected = '') {
+            const sel = $(id);
+            if (!sel) return;
+            const models = state.config?.models || [];
+            const options = models.map(m => `<option value="${esc(m.name)}" ${m.name === selected ? 'selected' : ''}>${esc(m.name)}</option>`).join('');
+            if (id.includes('default')) {
+                sel.innerHTML = options || '<option value="">No models configured</option>';
+            } else {
+                sel.innerHTML = '<option value="">None</option>' + options;
+            }
+        }
+
+        function renderRouter() {
+            const r = state.config?.router || {};
+            populateModelSelect('router-default', r.default);
+            populateModelSelect('router-think', r.think);
+            populateModelSelect('router-background', r.background);
+            populateModelSelect('router-websearch', r.websearch);
+        }
+
+        function updateRouter() {
+            if (!state.config.router) state.config.router = {};
+            state.config.router.default = $('router-default').value;
+            state.config.router.think = $('router-think').value || undefined;
+            state.config.router.background = $('router-background').value || undefined;
+            state.config.router.websearch = $('router-websearch').value || undefined;
+        }
+
+        // Settings
+        function renderSettings() {
+            const r = state.config?.router || {};
+            $('settings-automap').value = r.auto_map_regex || '';
+            $('settings-background').value = r.background_regex || '';
+            loadOAuthTokens();
+        }
+
+        function updateSettings() {
+            if (!state.config.router) state.config.router = {};
+            state.config.router.auto_map_regex = $('settings-automap').value || undefined;
+            state.config.router.background_regex = $('settings-background').value || undefined;
+        }
+
+        async function loadOAuthTokens() {
+            try {
+                const res = await fetch('/api/oauth/tokens');
+                const tokens = await res.json();
+                const container = $('oauth-tokens');
+                if (!tokens.length) {
+                    container.innerHTML = '<p class="text-sm text-gray-500">No OAuth tokens stored.</p>';
+                    return;
+                }
+                container.innerHTML = tokens.map(t => `
+                    <div class="flex justify-between items-center p-2 bg-gray-50 rounded">
+                        <span class="text-sm">${esc(t.provider)}</span>
+                        <button onclick="deleteToken('${esc(t.provider)}')" class="text-red-500 text-sm">Delete</button>
+                    </div>
+                `).join('');
+            } catch (e) {
+                $('oauth-tokens').innerHTML = '<p class="text-sm text-gray-500">Failed to load tokens.</p>';
+            }
+        }
+
+        async function deleteToken(provider) {
+            if (confirm('Delete this OAuth token?')) {
+                await fetch('/api/oauth/tokens/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider })
+                });
+                loadOAuthTokens();
+            }
+        }
+
+        // HTML escape
+        function esc(s) { return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+        // Init
+        document.addEventListener('DOMContentLoaded', async () => {
+            await loadConfig();
+            const tab = new URLSearchParams(location.search).get('tab') || 'overview';
+            showTab(tab);
+        });
+    </script>
+</body>
+</html>

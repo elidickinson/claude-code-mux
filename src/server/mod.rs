@@ -1,19 +1,17 @@
 mod openai_compat;
 mod oauth_handlers;
 
-use crate::cli::AppConfig;
-use crate::models::{AnthropicRequest, RouteType};
+use crate::cli::{AppConfig, ModelMapping};
+use crate::models::{AnthropicRequest, RouteDecision, RouteType};
 use crate::router::Router;
-use crate::providers::ProviderRegistry;
+use crate::providers::{AnthropicProvider, ProviderRegistry};
 use crate::auth::TokenStore;
 use crate::message_tracing::MessageTracer;
 use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::{
-        Html, IntoResponse, Response,
-    },
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Form, Json, Router as AxumRouter,
 };
@@ -90,6 +88,118 @@ fn write_routing_info(model: &str, provider: &str, route_type: &RouteType) {
         } else {
             tracing::debug!("Failed to serialize routing info");
         }
+    }
+}
+
+/// Resolved provider with its mapping info
+pub struct ResolvedProvider {
+    pub provider: Arc<Box<dyn AnthropicProvider>>,
+    pub mapping: ModelMapping,
+    pub index: usize,
+    pub total: usize,
+}
+
+impl ResolvedProvider {
+    /// Format retry info string (empty for first attempt)
+    pub fn retry_info(&self) -> String {
+        if self.index > 0 {
+            format!(" [{}/{}]", self.index + 1, self.total)
+        } else {
+            String::new()
+        }
+    }
+}
+
+/// Resolve providers for a routed model, returning them in priority order.
+/// Handles X-Provider header override and fallback to direct registry lookup.
+fn resolve_providers(
+    inner: &ReloadableState,
+    headers: &HeaderMap,
+    decision: &RouteDecision,
+) -> Result<Vec<ResolvedProvider>, AppError> {
+    // Check for X-Provider header to override priority
+    let forced_provider = headers
+        .get("x-provider")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    if let Some(ref provider_name) = forced_provider {
+        info!("🎯 Using forced provider from X-Provider header: {}", provider_name);
+    }
+
+    // Try to find model config
+    if let Some(model_config) = inner.config.models.iter()
+        .find(|m| m.name.eq_ignore_ascii_case(&decision.model_name))
+    {
+        let mut sorted_mappings = model_config.mappings.clone();
+
+        if let Some(ref provider_name) = forced_provider {
+            // Filter to only the specified provider
+            sorted_mappings.retain(|m| m.provider == *provider_name);
+            if sorted_mappings.is_empty() {
+                return Err(AppError::RoutingError(format!(
+                    "Provider '{}' not found in mappings for model '{}'",
+                    provider_name, decision.model_name
+                )));
+            }
+        } else {
+            sorted_mappings.sort_by_key(|m| m.priority);
+        }
+
+        let total = sorted_mappings.len();
+        let mut resolved = Vec::with_capacity(total);
+
+        for (index, mapping) in sorted_mappings.into_iter().enumerate() {
+            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
+                resolved.push(ResolvedProvider { provider, mapping, index, total });
+            } else {
+                debug!("⚠️ Provider {} not found in registry", mapping.provider);
+            }
+        }
+
+        if resolved.is_empty() {
+            return Err(AppError::ProviderError(format!(
+                "No available providers for model: {}", decision.model_name
+            )));
+        }
+
+        Ok(resolved)
+    } else {
+        // Fallback: direct provider registry lookup
+        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
+            debug!("📦 Using provider from registry (direct lookup): {}", decision.model_name);
+            Ok(vec![ResolvedProvider {
+                provider,
+                mapping: ModelMapping {
+                    priority: 1,
+                    provider: "registry".to_string(),
+                    actual_model: decision.model_name.clone(),
+                    inject_continuation_prompt: false,
+                },
+                index: 0,
+                total: 1,
+            }])
+        } else {
+            Err(AppError::ProviderError(format!(
+                "No model mapping or provider found for: {}", decision.model_name
+            )))
+        }
+    }
+}
+
+/// Format route type for logging, including matched prompt snippet if available
+fn format_route_type(decision: &RouteDecision) -> String {
+    match &decision.matched_prompt {
+        Some(matched) => {
+            let trimmed = if matched.len() > 30 {
+                format!("{}...", &matched[..27])
+            } else {
+                matched.clone()
+            };
+            format!("{}:{}", decision.route_type, trimmed)
+        }
+        None => decision.route_type.to_string(),
     }
 }
 
@@ -199,7 +309,7 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
 
 /// Serve Admin UI
 async fn serve_admin() -> impl IntoResponse {
-    Html(include_str!("admin.html"))
+    Html(include_str!("../../static/admin.html"))
 }
 
 /// Health check endpoint
@@ -474,9 +584,6 @@ async fn reload_config(State(state): State<Arc<AppState>>) -> Response {
 }
 
 /// Handle /v1/chat/completions requests (OpenAI-compatible endpoint)
-///
-/// Note: This endpoint has limited functionality. The primary use case for this proxy
-/// is Claude Code (Anthropic client) connecting via /v1/messages.
 async fn handle_openai_chat_completions(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -484,167 +591,56 @@ async fn handle_openai_chat_completions(
 ) -> Result<Response, AppError> {
     let model = openai_request.model.clone();
     let start_time = std::time::Instant::now();
-
-    // Get snapshot of reloadable state
     let inner = state.snapshot();
 
-    // Streaming is not supported for /v1/chat/completions
     if openai_request.stream == Some(true) {
         return Err(AppError::ParseError(
-            "Streaming is not supported for /v1/chat/completions. Use /v1/messages instead.".to_string()
+            "Streaming not supported for /v1/chat/completions. Use /v1/messages.".to_string()
         ));
     }
 
-    // 1. Transform OpenAI request to Anthropic format
+    // Transform and route
     let mut anthropic_request = openai_compat::transform_openai_to_anthropic(openai_request)
-        .map_err(|e| AppError::ParseError(format!("Failed to transform OpenAI request: {}", e)))?;
-
-    // 2. Route the request (may modify system prompt to remove CCM-SUBAGENT-MODEL tag)
-    let decision = inner
-        .router
-        .route(&mut anthropic_request)
+        .map_err(|e| AppError::ParseError(format!("Failed to transform request: {}", e)))?;
+    let decision = inner.router.route(&mut anthropic_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
-    // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
+    // Try each provider in priority order
+    let providers = resolve_providers(&inner, &headers, &decision)?;
+    let route_display = format_route_type(&decision);
 
-        // Check for X-Provider header to override priority
-        let forced_provider = headers
-            .get("x-provider")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+    for rp in &providers {
+        info!("[{:<15}:sync] {:<25} → {}/{}{}",
+            route_display, model, rp.mapping.provider, rp.mapping.actual_model, rp.retry_info());
 
-        if let Some(ref provider_name) = forced_provider {
-            info!("🎯 Using forced provider from X-Provider header: {}", provider_name);
-        }
+        let mut req = anthropic_request.clone();
+        req.model = rp.mapping.actual_model.clone();
 
-        // Sort mappings by priority (or filter by forced provider)
-        let mut sorted_mappings = model_config.mappings.clone();
-
-        if let Some(ref provider_name) = forced_provider {
-            // Filter to only the specified provider
-            sorted_mappings.retain(|m| m.provider == *provider_name);
-            if sorted_mappings.is_empty() {
-                return Err(AppError::RoutingError(format!(
-                    "Provider '{}' not found in mappings for model '{}'",
-                    provider_name, decision.model_name
-                )));
+        if rp.mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
+            if let Some(last_msg) = req.messages.last_mut() {
+                if should_inject_continuation(last_msg) {
+                    inject_continuation_text(last_msg);
+                }
             }
-        } else {
-            // Use priority ordering
-            sorted_mappings.sort_by_key(|m| m.priority);
         }
 
-        // Try each mapping in priority order (or just the forced one)
-        for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            // Try to get provider from registry
-            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
-                // Build retry indicator (only show if not first attempt)
-                let retry_info = if idx > 0 {
-                    format!(" [{}/{}]", idx + 1, sorted_mappings.len())
-                } else {
-                    String::new()
-                };
-
-                // Build route type display (include matched prompt snippet if available)
-                let route_type_display = match &decision.matched_prompt {
-                    Some(matched) => {
-                        // Trim prompt to max 30 chars
-                        let trimmed = if matched.len() > 30 {
-                            format!("{}...", &matched[..27])
-                        } else {
-                            matched.clone()
-                        };
-                        format!("{}:{}", decision.route_type, trimmed)
-                    }
-                    None => decision.route_type.to_string(),
-                };
-
-                info!(
-                    "[{:<15}:sync] {:<25} → {}/{}{}",
-                    route_type_display,
-                    model,
-                    mapping.provider,
-                    mapping.actual_model,
-                    retry_info
-                );
-
-                // Update model to actual model name
-                anthropic_request.model = mapping.actual_model.clone();
-
-                // Inject continuation prompt if configured (skip for background tasks)
-                if mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
-                    if let Some(last_msg) = anthropic_request.messages.last_mut() {
-                        if should_inject_continuation(last_msg) {
-                            info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
-                            inject_continuation_text(last_msg);
-                        }
-                    }
-                }
-
-                match provider.send_message(anthropic_request.clone()).await {
-                    Ok(anthropic_response) => {
-                        // Calculate and log metrics
-                        let latency_ms = start_time.elapsed().as_millis() as u64;
-                        let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                        info!("📊 {}@{} {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, latency_ms, tok_s, anthropic_response.usage.output_tokens);
-
-                        // Write routing info for statusline
-                        write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
-
-                        // Transform Anthropic response to OpenAI format
-                        let openai_response = openai_compat::transform_anthropic_to_openai(
-                            anthropic_response,
-                            model.clone(),
-                        );
-
-                        return Ok(Json(openai_response).into_response());
-                    }
-                    Err(e) => {
-                        info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
-                        continue;
-                    }
-                }
-            } else {
-                info!("⚠️ Provider {} not found in registry, trying next fallback", mapping.provider);
+        match rp.provider.send_message(req).await {
+            Ok(response) => {
+                let latency_ms = start_time.elapsed().as_millis() as u64;
+                let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
+                info!("📊 {}@{} {}ms {:.0}t/s {}tok",
+                    rp.mapping.actual_model, rp.mapping.provider, latency_ms, tok_s, response.usage.output_tokens);
+                write_routing_info(&rp.mapping.actual_model, &rp.mapping.provider, &decision.route_type);
+                return Ok(Json(openai_compat::transform_anthropic_to_openai(response, model)).into_response());
+            }
+            Err(e) => {
+                info!("⚠️ Provider {} failed: {}", rp.mapping.provider, e);
                 continue;
             }
         }
-
-        error!("❌ All provider mappings failed for model: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "All {} provider mappings failed for model: {}",
-            sorted_mappings.len(),
-            decision.model_name
-        )));
-    } else {
-        // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
-            info!("📦 Using provider from registry (direct lookup): {}", decision.model_name);
-
-            // Update model to routed model
-            anthropic_request.model = decision.model_name.clone();
-
-            let anthropic_response = provider.send_message(anthropic_request)
-                .await
-                .map_err(|e| AppError::ProviderError(e.to_string()))?;
-
-            // Transform to OpenAI format
-            let openai_response = openai_compat::transform_anthropic_to_openai(
-                anthropic_response,
-                model,
-            );
-
-            return Ok(Json(openai_response).into_response());
-        }
-
-        error!("❌ No model mapping or provider found for model: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "No model mapping or provider found for model: {}",
-            decision.model_name
-        )));
     }
+
+    Err(AppError::ProviderError(format!("All {} providers failed for: {}", providers.len(), decision.model_name)))
 }
 
 /// Check if message has tool results but no text content
@@ -696,259 +692,97 @@ async fn handle_messages(
     headers: HeaderMap,
     Json(request_json): Json<serde_json::Value>,
 ) -> Result<Response, AppError> {
-    let model = request_json
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("unknown");
+    let model = request_json.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
     let start_time = std::time::Instant::now();
-
-    // Get snapshot of reloadable state
     let inner = state.snapshot();
-
-    // Generate trace ID for correlating request/response
     let trace_id = state.message_tracer.new_trace_id();
 
-    // DEBUG: Log request body for debugging
-    if let Ok(json_str) = serde_json::to_string_pretty(&request_json) {
-        tracing::debug!("📥 Incoming request body:\n{}", json_str);
-    }
-
-    // 1. Parse request for routing decision (mutable for tag extraction)
+    // Parse and route request
     let mut request_for_routing: AnthropicRequest = serde_json::from_value(request_json.clone())
         .map_err(|e| {
-            // Log the full request on parse failure for debugging
-            if let Ok(pretty) = serde_json::to_string_pretty(&request_json) {
-                tracing::error!("❌ Failed to parse request: {}\n📋 Request body:\n{}", e, pretty);
-            } else {
-                tracing::error!("❌ Failed to parse request: {}", e);
-            }
+            tracing::error!("❌ Failed to parse request: {}", e);
             AppError::ParseError(format!("Invalid request format: {}", e))
         })?;
 
-    // 2. Route the request (may modify system prompt to remove CCM-SUBAGENT-MODEL tag)
-    let decision = inner
-        .router
-        .route(&mut request_for_routing)
+    let decision = inner.router.route(&mut request_for_routing)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
 
-    // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
+    // Resolve providers and try each in priority order
+    let providers = resolve_providers(&inner, &headers, &decision)?;
+    let route_display = format_route_type(&decision);
 
-        // Check for X-Provider header to override priority
-        let forced_provider = headers
-            .get("x-provider")
-            .and_then(|v| v.to_str().ok())
-            .filter(|s| !s.is_empty())  // Ignore empty strings
-            .map(|s| s.to_string());
+    for rp in &providers {
+        // Build request for this provider
+        let mut req: AnthropicRequest = serde_json::from_value(request_json.clone())
+            .map_err(|e| AppError::ParseError(format!("Invalid request format: {}", e)))?;
+        let original_model = req.model.clone();
+        req.model = rp.mapping.actual_model.clone();
+        req.system = request_for_routing.system.clone();
 
-        if let Some(ref provider_name) = forced_provider {
-            info!("🎯 Using forced provider from X-Provider header: {}", provider_name);
+        // Inject continuation prompt if configured
+        if rp.mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
+            if let Some(last_msg) = req.messages.last_mut() {
+                if should_inject_continuation(last_msg) {
+                    inject_continuation_text(last_msg);
+                }
+            }
         }
 
-        // Sort mappings by priority (or filter by forced provider)
-        let mut sorted_mappings = model_config.mappings.clone();
+        let is_streaming = req.stream == Some(true);
+        let stream_mode = if is_streaming { "stream" } else { "sync" };
 
-        if let Some(ref provider_name) = forced_provider {
-            // Filter to only the specified provider
-            sorted_mappings.retain(|m| m.provider == *provider_name);
-            if sorted_mappings.is_empty() {
-                return Err(AppError::RoutingError(format!(
-                    "Provider '{}' not found in mappings for model '{}'",
-                    provider_name, decision.model_name
-                )));
+        info!("[{:<15}:{}] {:<25} → {}/{}{}",
+            route_display, stream_mode, model, rp.mapping.provider, rp.mapping.actual_model, rp.retry_info());
+
+        state.message_tracer.trace_request(&trace_id, &req, &rp.mapping.provider, &decision.route_type, is_streaming);
+
+        if is_streaming {
+            match rp.provider.send_message_stream(req).await {
+                Ok(stream_response) => {
+                    write_routing_info(&rp.mapping.actual_model, &rp.mapping.provider, &decision.route_type);
+                    let body_stream = stream_response.stream.map_err(|e| {
+                        error!("Stream error: {}", e);
+                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                    });
+                    let body = Body::from_stream(body_stream);
+                    let mut builder = Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream")
+                        .header("Cache-Control", "no-cache")
+                        .header("Connection", "keep-alive");
+                    for (name, value) in stream_response.headers {
+                        builder = builder.header(name, value);
+                    }
+                    return Ok(builder.body(body).unwrap());
+                }
+                Err(e) => {
+                    state.message_tracer.trace_error(&trace_id, &e.to_string());
+                    info!("⚠️ Provider {} streaming failed: {}", rp.mapping.provider, e);
+                    continue;
+                }
             }
         } else {
-            // Use priority ordering
-            sorted_mappings.sort_by_key(|m| m.priority);
-        }
-
-        // Try each mapping in priority order (or just the forced one)
-        for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            // Try to get provider from registry
-            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
-                // Trust the model mapping configuration - no need to validate
-
-                // Parse request as Anthropic format
-                let mut anthropic_request: AnthropicRequest = serde_json::from_value(request_json.clone())
-                    .map_err(|e| AppError::ParseError(format!("Invalid request format: {}", e)))?;
-
-                // Save original model name for response
-                let original_model = anthropic_request.model.clone();
-
-                // Update model to actual model name
-                anthropic_request.model = mapping.actual_model.clone();
-
-                // Update system if modified during routing
-                anthropic_request.system = request_for_routing.system.clone();
-
-                // Inject continuation prompt if configured (skip for background tasks)
-                if mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
-                    if let Some(last_msg) = anthropic_request.messages.last_mut() {
-                        if should_inject_continuation(last_msg) {
-                            info!("💉 Injecting continuation prompt for model: {}", mapping.actual_model);
-                            inject_continuation_text(last_msg);
-                        }
-                    }
+            match rp.provider.send_message(req).await {
+                Ok(mut response) => {
+                    response.model = original_model;
+                    let latency_ms = start_time.elapsed().as_millis() as u64;
+                    let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
+                    info!("📊 {}@{} {}ms {:.0}t/s {}tok",
+                        rp.mapping.actual_model, rp.mapping.provider, latency_ms, tok_s, response.usage.output_tokens);
+                    state.message_tracer.trace_response(&trace_id, &response, latency_ms);
+                    write_routing_info(&rp.mapping.actual_model, &rp.mapping.provider, &decision.route_type);
+                    return Ok(Json(response).into_response());
                 }
-
-                // Check if streaming is requested
-                let is_streaming = anthropic_request.stream == Some(true);
-
-                // Build retry indicator (only show if not first attempt)
-                let retry_info = if idx > 0 {
-                    format!(" [{}/{}]", idx + 1, sorted_mappings.len())
-                } else {
-                    String::new()
-                };
-
-                let stream_mode = if is_streaming { "stream" } else { "sync" };
-
-                // Build route type display (include matched prompt snippet if available)
-                let route_type_display = match &decision.matched_prompt {
-                    Some(matched) => {
-                        // Trim prompt to max 30 chars
-                        let trimmed = if matched.len() > 30 {
-                            format!("{}...", &matched[..27])
-                        } else {
-                            matched.clone()
-                        };
-                        format!("{}:{}", decision.route_type, trimmed)
-                    }
-                    None => decision.route_type.to_string(),
-                };
-
-                info!(
-                    "[{:<15}:{}] {:<25} → {}/{}{}",
-                    route_type_display,
-                    stream_mode,
-                    model,
-                    mapping.provider,
-                    mapping.actual_model,
-                    retry_info
-                );
-
-                // Trace the request
-                state.message_tracer.trace_request(
-                    &trace_id,
-                    &anthropic_request,
-                    &mapping.provider,
-                    &decision.route_type,
-                    is_streaming,
-                );
-
-                if is_streaming {
-                    // Streaming request
-                    match provider.send_message_stream(anthropic_request).await {
-                        Ok(stream_response) => {
-                            // Write routing info for statusline
-                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
-
-                            // Convert provider stream to HTTP response
-                            // The provider already returns properly formatted SSE bytes (event: + data: lines)
-                            // We pass them through as-is without wrapping
-                            let body_stream = stream_response.stream.map_err(|e| {
-                                error!("Stream error: {}", e);
-                                std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                            });
-
-                            let body = Body::from_stream(body_stream);
-                            let mut response_builder = Response::builder()
-                                .status(200)
-                                .header("Content-Type", "text/event-stream")
-                                .header("Cache-Control", "no-cache")
-                                .header("Connection", "keep-alive");
-
-                            // Forward Anthropic rate limit headers
-                            for (name, value) in stream_response.headers {
-                                response_builder = response_builder.header(name, value);
-                            }
-
-                            let response = response_builder.body(body).unwrap();
-
-                            return Ok(response);
-                        }
-                        Err(e) => {
-                            state.message_tracer.trace_error(&trace_id, &e.to_string());
-                            info!("⚠️ Provider {} streaming failed: {}, trying next fallback", mapping.provider, e);
-                            continue;
-                        }
-                    }
-                } else {
-                    // Non-streaming request (original behavior)
-                    match provider.send_message(anthropic_request).await {
-                        Ok(mut response) => {
-                            // Restore original model name in response
-                            response.model = original_model;
-                            info!("✅ Request succeeded with provider: {}, response model: {}", mapping.provider, response.model);
-
-                            // Calculate and log metrics
-                            let latency_ms = start_time.elapsed().as_millis() as u64;
-                            let tok_s = (response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
-                            info!("📊 {}@{} {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, latency_ms, tok_s, response.usage.output_tokens);
-
-                            // Trace the response
-                            state.message_tracer.trace_response(&trace_id, &response, latency_ms);
-
-                            // Write routing info for statusline
-                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
-
-                            return Ok(Json(response).into_response());
-                        }
-                        Err(e) => {
-                            state.message_tracer.trace_error(&trace_id, &e.to_string());
-                            info!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
-                            continue;
-                        }
-                    }
+                Err(e) => {
+                    state.message_tracer.trace_error(&trace_id, &e.to_string());
+                    info!("⚠️ Provider {} failed: {}", rp.mapping.provider, e);
+                    continue;
                 }
-            } else {
-                info!("⚠️ Provider {} not found in registry, trying next fallback", mapping.provider);
-                continue;
             }
         }
-
-        error!("❌ All provider mappings failed for model: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "All {} provider mappings failed for model: {}",
-            sorted_mappings.len(),
-            decision.model_name
-        )));
-    } else {
-        // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
-            info!("📦 Using provider from registry (direct lookup): {}", decision.model_name);
-
-            // Parse request as Anthropic format
-            let mut anthropic_request: AnthropicRequest = serde_json::from_value(request_json.clone())
-                .map_err(|e| AppError::ParseError(format!("Invalid request format: {}", e)))?;
-
-            // Save original model name for response
-            let original_model = anthropic_request.model.clone();
-
-            // Update model to routed model
-            anthropic_request.model = decision.model_name.clone();
-
-            // Update system if modified during routing
-            anthropic_request.system = request_for_routing.system.clone();
-
-            // Call provider
-            let mut provider_response = provider.send_message(anthropic_request)
-                .await
-                .map_err(|e| AppError::ProviderError(e.to_string()))?;
-
-            // Restore original model name in response
-            provider_response.model = original_model;
-
-            // Return provider response
-            return Ok(Json(provider_response).into_response());
-        }
-
-        error!("❌ No model mapping or provider found for model: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "No model mapping or provider found for model: {}",
-            decision.model_name
-        )));
     }
+
+    Err(AppError::ProviderError(format!("All {} providers failed for: {}", providers.len(), decision.model_name)))
 }
 
 /// Handle /v1/messages/count_tokens requests
@@ -958,113 +792,47 @@ async fn handle_count_tokens(
 ) -> Result<Response, AppError> {
     let model = request_json.get("model").and_then(|m| m.as_str()).unwrap_or("unknown");
     debug!("Received count_tokens request for model: {}", model);
-
-    // Get snapshot of reloadable state
     let inner = state.snapshot();
 
-    // 1. Parse as CountTokensRequest first
     use crate::models::CountTokensRequest;
     let count_request: CountTokensRequest = serde_json::from_value(request_json.clone())
-        .map_err(|e| AppError::ParseError(format!("Invalid count_tokens request format: {}", e)))?;
+        .map_err(|e| AppError::ParseError(format!("Invalid count_tokens request: {}", e)))?;
 
-    // 2. Create a minimal AnthropicRequest for routing
+    // Create minimal request for routing
     let mut routing_request = AnthropicRequest {
         model: count_request.model.clone(),
         messages: count_request.messages.clone(),
-        max_tokens: 1024, // Dummy value for routing
+        max_tokens: 1024,
         system: count_request.system.clone(),
         tools: count_request.tools.clone(),
-        thinking: None,
-        temperature: None,
-        top_p: None,
-        top_k: None,
-        stop_sequences: None,
-        stream: None,
-        metadata: None,
+        thinking: None, temperature: None, top_p: None, top_k: None,
+        stop_sequences: None, stream: None, metadata: None,
     };
-    let decision = inner
-        .router
-        .route(&mut routing_request)
+
+    let decision = inner.router.route(&mut routing_request)
         .map_err(|e| AppError::RoutingError(e.to_string()))?;
+    debug!("🧮 Routed count_tokens: {} → {} ({})", model, decision.model_name, decision.route_type);
 
-    debug!(
-        "🧮 Routed count_tokens: {} → {} ({})",
-        model, decision.model_name, decision.route_type
-    );
+    // Resolve providers (no X-Provider header for count_tokens)
+    let providers = resolve_providers(&inner, &HeaderMap::new(), &decision)?;
 
-    // 3. Try model mappings with fallback (1:N mapping)
-    if let Some(model_config) = inner.config.models.iter().find(|m| m.name.eq_ignore_ascii_case(&decision.model_name)) {
-        debug!("📋 Found {} provider mappings for token counting: {}", model_config.mappings.len(), decision.model_name);
+    for rp in &providers {
+        let mut req = count_request.clone();
+        req.model = rp.mapping.actual_model.clone();
 
-        // Sort mappings by priority
-        let mut sorted_mappings = model_config.mappings.clone();
-        sorted_mappings.sort_by_key(|m| m.priority);
-
-        // Try each mapping in priority order
-        for (idx, mapping) in sorted_mappings.iter().enumerate() {
-            debug!(
-                "🔄 Trying token count mapping {}/{}: provider={}, actual_model={}",
-                idx + 1,
-                sorted_mappings.len(),
-                mapping.provider,
-                mapping.actual_model
-            );
-
-            // Try to get provider from registry
-            if let Some(provider) = inner.provider_registry.get_provider(&mapping.provider) {
-                // Trust the model mapping configuration - no need to validate
-
-                // Update model to actual model name
-                let mut count_request_for_provider = count_request.clone();
-                count_request_for_provider.model = mapping.actual_model.clone();
-
-                // Call provider's count_tokens
-                match provider.count_tokens(count_request_for_provider).await {
-                    Ok(response) => {
-                        debug!("✅ Token count succeeded with provider: {}", mapping.provider);
-                        return Ok(Json(response).into_response());
-                    }
-                    Err(e) => {
-                        debug!("⚠️ Provider {} failed: {}, trying next fallback", mapping.provider, e);
-                        continue;
-                    }
-                }
-            } else {
-                debug!("⚠️ Provider {} not found in registry, trying next fallback", mapping.provider);
+        match rp.provider.count_tokens(req).await {
+            Ok(response) => {
+                debug!("✅ Token count succeeded with provider: {}", rp.mapping.provider);
+                return Ok(Json(response).into_response());
+            }
+            Err(e) => {
+                debug!("⚠️ Provider {} failed: {}", rp.mapping.provider, e);
                 continue;
             }
         }
-
-        error!("❌ All provider mappings failed for token counting: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "All {} provider mappings failed for token counting: {}",
-            sorted_mappings.len(),
-            decision.model_name
-        )));
-    } else {
-        // No model mapping found, try direct provider registry lookup (backward compatibility)
-        if let Ok(provider) = inner.provider_registry.get_provider_for_model(&decision.model_name) {
-            debug!("📦 Using provider from registry (direct lookup) for token counting: {}", decision.model_name);
-
-            // Update model to routed model
-            let mut count_request_for_provider = count_request.clone();
-            count_request_for_provider.model = decision.model_name.clone();
-
-            // Call provider's count_tokens
-            let response = provider.count_tokens(count_request_for_provider)
-                .await
-                .map_err(|e| AppError::ProviderError(e.to_string()))?;
-
-            debug!("✅ Token count completed via provider");
-            return Ok(Json(response).into_response());
-        }
-
-        error!("❌ No model mapping or provider found for token counting: {}", decision.model_name);
-        return Err(AppError::ProviderError(format!(
-            "No model mapping or provider found for token counting: {}",
-            decision.model_name
-        )));
     }
+
+    Err(AppError::ProviderError(format!("All {} providers failed for count_tokens: {}", providers.len(), decision.model_name)))
 }
 
 /// Application error types
