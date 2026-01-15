@@ -230,6 +230,22 @@ struct OpenAIStreamDelta {
     tool_calls: Option<Vec<serde_json::Value>>,
 }
 
+/// OpenAI-compatible error response (returned by some providers in stream body)
+/// Example: {"status_code":500,"error":{"message":"Server error","type":"server_error",...}}
+#[derive(Debug, Deserialize)]
+struct OpenAIStreamError {
+    #[serde(default)]
+    status_code: Option<u16>,
+    error: OpenAIErrorDetail,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIErrorDetail {
+    message: String,
+    #[serde(default)]
+    r#type: Option<String>,
+}
+
 /// State for OpenAI → Anthropic SSE transformation
 ///
 /// Tracks streaming state across multiple chunks to properly transform
@@ -1544,10 +1560,14 @@ impl AnthropicProvider for OpenAIProvider {
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
 
+        // Capture provider name for error logging in the stream
+        let provider_name = self.name.clone();
+
         // Transform OpenAI SSE events to Anthropic format
         let transformed_stream = sse_stream.then(move |result| {
             let message_id = message_id.clone();
             let state = state.clone();
+            let provider_name = provider_name.clone();
 
             async move {
                 match result {
@@ -1569,6 +1589,20 @@ impl AnthropicProvider for OpenAIProvider {
                         if sse_event.data.trim() == "[DONE]" {
                             tracing::debug!("✅ Stream finished with [DONE]");
                             return Ok(Bytes::new());
+                        }
+
+                        // Check for error response first (some providers return HTTP 200 with error in body)
+                        if let Ok(error_response) = serde_json::from_str::<OpenAIStreamError>(&sse_event.data) {
+                            let status = error_response.status_code.unwrap_or(500);
+                            let error_type = error_response.error.r#type.as_deref().unwrap_or("unknown");
+                            tracing::error!(
+                                "❌ {} upstream error ({}): {} [type={}]",
+                                provider_name, status, error_response.error.message, error_type
+                            );
+                            return Err(ProviderError::ApiError {
+                                status,
+                                message: format!("{}: {}", provider_name, error_response.error.message),
+                            });
                         }
 
                         // Parse OpenAI chunk
@@ -1593,7 +1627,10 @@ impl AnthropicProvider for OpenAIProvider {
                                 Ok(Bytes::from(sse_output))
                             }
                             Err(e) => {
-                                tracing::warn!("❌ Failed to parse OpenAI chunk: {} - Data: {}", e, sse_event.data);
+                                tracing::warn!(
+                                    "❌ {} failed to parse chunk: {} - Data: {}",
+                                    provider_name, e, sse_event.data
+                                );
                                 Ok(Bytes::new())
                             }
                         }
@@ -1673,5 +1710,45 @@ impl AnthropicProvider for OpenAIProvider {
 
     fn supports_model(&self, model: &str) -> bool {
         self.models.iter().any(|m| m.eq_ignore_ascii_case(model))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_stream_error_response() {
+        // This is the actual error format returned by Cerebras (and similar providers)
+        // when they return HTTP 200 but have an error in the stream body
+        let error_json = r#"{"status_code":500,"error":{"message":"Encountered a server error, please try again.","type":"server_error","param":"","code":"","id":""}}"#;
+
+        let error: OpenAIStreamError = serde_json::from_str(error_json).unwrap();
+
+        assert_eq!(error.status_code, Some(500));
+        assert_eq!(error.error.message, "Encountered a server error, please try again.");
+        assert_eq!(error.error.r#type, Some("server_error".to_string()));
+    }
+
+    #[test]
+    fn test_stream_error_does_not_match_valid_chunk() {
+        // Valid OpenAI streaming chunk should NOT parse as OpenAIStreamError
+        let valid_chunk = r#"{"id":"chatcmpl-123","object":"chat.completion.chunk","created":1234567890,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#;
+
+        // Should fail to parse as error (no 'error' field)
+        let result = serde_json::from_str::<OpenAIStreamError>(valid_chunk);
+        assert!(result.is_err(), "Valid chunk should not parse as error response");
+    }
+
+    #[test]
+    fn test_parse_error_without_status_code() {
+        // Some providers may omit status_code
+        let error_json = r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit_error"}}"#;
+
+        let error: OpenAIStreamError = serde_json::from_str(error_json).unwrap();
+
+        assert_eq!(error.status_code, None);
+        assert_eq!(error.error.message, "Rate limit exceeded");
+        assert_eq!(error.error.r#type, Some("rate_limit_error".to_string()));
     }
 }
