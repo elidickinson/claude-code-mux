@@ -778,8 +778,9 @@ async fn handle_messages(
                 // Update model to actual model name
                 anthropic_request.model = mapping.actual_model.clone();
 
-                // Update system if modified during routing
+                // Apply routing modifications (system prompt, messages)
                 anthropic_request.system = request_for_routing.system.clone();
+                anthropic_request.messages = request_for_routing.messages.clone();
 
                 // Inject continuation prompt if configured (skip for background tasks)
                 if mapping.inject_continuation_prompt && decision.route_type != RouteType::Background {
@@ -928,8 +929,9 @@ async fn handle_messages(
             // Update model to routed model
             anthropic_request.model = decision.model_name.clone();
 
-            // Update system if modified during routing
+            // Apply routing modifications (system prompt, messages)
             anthropic_request.system = request_for_routing.system.clone();
+            anthropic_request.messages = request_for_routing.messages.clone();
 
             // Call provider
             let mut provider_response = provider.send_message(anthropic_request)

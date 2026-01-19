@@ -278,6 +278,39 @@ impl Router {
             return None;
         }
 
+        // Debug: dump message structure for troubleshooting
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            use crate::models::ContentBlock;
+            for (idx, msg) in request.messages.iter().enumerate() {
+                let content_desc = match &msg.content {
+                    MessageContent::Text(t) => {
+                        let preview: String = t.chars().take(60).collect();
+                        format!("Text({:?}{})", preview, if t.len() > 60 { "..." } else { "" })
+                    }
+                    MessageContent::Blocks(blocks) => {
+                        let types: Vec<&str> = blocks
+                            .iter()
+                            .map(|b| match b {
+                                ContentBlock::Known(k) => match k {
+                                    crate::models::KnownContentBlock::Text { .. } => "text",
+                                    crate::models::KnownContentBlock::Image { .. } => "image",
+                                    crate::models::KnownContentBlock::ToolUse { .. } => "tool_use",
+                                    crate::models::KnownContentBlock::ToolResult { .. } => "tool_result",
+                                    crate::models::KnownContentBlock::Thinking { .. } => "thinking",
+                                },
+                                ContentBlock::Unknown(_) => "unknown",
+                            })
+                            .collect();
+                        format!("Blocks({:?})", types)
+                    }
+                };
+                debug!(
+                    "🔍 msg[{}] role={}: {}",
+                    idx, msg.role, content_desc
+                );
+            }
+        }
+
         // Extract turn-starting user message content (persists through tool calls)
         let user_content = self.extract_turn_starting_user_message(request)?;
 
@@ -362,6 +395,12 @@ impl Router {
     fn find_turn_start_index(&self, request: &AnthropicRequest) -> usize {
         use crate::models::ContentBlock;
 
+        // Debug: log message structure for prompt rule detection
+        debug!(
+            "🔍 find_turn_start_index: {} messages in request",
+            request.messages.len()
+        );
+
         for (idx, msg) in request.messages.iter().enumerate().rev() {
             if msg.role == "assistant" {
                 // Check if this assistant message has any tool_use blocks
@@ -375,14 +414,21 @@ impl Router {
                     }),
                 };
 
+                debug!(
+                    "🔍 Assistant msg at idx={}: has_tool_use={}",
+                    idx, has_tool_use
+                );
+
                 if !has_tool_use {
                     // This assistant message ends the previous turn
                     // Current turn starts after this message
+                    debug!("🔍 Turn starts at idx={} (after assistant without tool_use)", idx + 1);
                     return idx + 1;
                 }
             }
         }
 
+        debug!("🔍 No turn boundary found, starting from idx=0");
         0 // No assistant message found, start from beginning
     }
 
@@ -390,7 +436,7 @@ impl Router {
         let turn_start_idx = self.find_turn_start_index(request);
 
         // Find the first user message with text content from turn_start_idx onwards
-        for msg in request.messages.iter().skip(turn_start_idx) {
+        for (offset, msg) in request.messages.iter().skip(turn_start_idx).enumerate() {
             if msg.role != "user" {
                 continue;
             }
@@ -419,12 +465,20 @@ impl Router {
                 }
             };
 
-            if text_content.is_some() {
+            if let Some(ref content) = text_content {
+                let preview: String = content.chars().take(80).collect();
+                debug!(
+                    "🔍 Turn-starting user msg at idx={}: {:?}{}",
+                    turn_start_idx + offset,
+                    preview,
+                    if content.len() > 80 { "..." } else { "" }
+                );
                 return text_content;
             }
         }
 
         // Fallback to last user message if no turn-starting message found
+        debug!("🔍 No turn-starting user message found, falling back to last user message");
         self.extract_last_user_message(request)
     }
 
