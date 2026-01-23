@@ -112,6 +112,12 @@ pub struct ProviderConfig {
     pub location: Option<String>,
 
     pub base_url: Option<String>,
+
+    /// Custom HTTP headers (e.g., {"X-Novita-Source": "claude-code-mux"})
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+
+    pub headers: Option<HashMap<String, String>>,
+
     pub models: Vec<String>,
     pub enabled: Option<bool>,
 }

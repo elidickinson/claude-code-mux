@@ -545,337 +545,73 @@
                         </p>
 
                         <form id="add-provider-form" class="space-y-8">
-                            <!-- Step 1: Provider Type -->
+                            <!-- Step 1: API Format -->
                             <div class="card">
                                 <h2 class="text-2xl font-bold mb-8">
-                                    Which provider do you want to add?
+                                    Select API Format
                                 </h2>
                                 <div class="grid grid-cols-3 gap-4">
-                                    <!-- Anthropic-compatible -->
                                     <label class="cursor-pointer">
                                         <input
                                             type="radio"
-                                            name="provider_type"
+                                            name="api_format"
                                             value="anthropic"
                                             class="peer sr-only"
                                             required
                                         />
                                         <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
+                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all h-full"
                                         >
-                                            <div class="text-xl font-bold mb-1">
-                                                Anthropic
+                                            <div class="text-xl font-bold mb-2">
+                                                Anthropic-compatible
                                             </div>
-                                            <div class="text-sm text-gray-600">
-                                                Claude models
+                                            <div class="text-sm text-gray-600 mb-3">
+                                                Claude, OpenRouter, z.ai, Minimax
+                                            </div>
+                                            <div class="text-xs text-green-600 font-medium">
+                                                ✓ OAuth supported (Anthropic)
                                             </div>
                                         </div>
                                     </label>
                                     <label class="cursor-pointer">
                                         <input
                                             type="radio"
-                                            name="provider_type"
-                                            value="z.ai"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                z.ai
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                GLM models
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="zenmux"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                ZenMux
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Unified API gateway
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="minimax"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Minimax
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                MiniMax models
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="kimi-coding"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Kimi For Coding
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Premium membership for Kimi
-                                            </div>
-                                        </div>
-                                    </label>
-
-                                    <!-- OpenAI-compatible -->
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
+                                            name="api_format"
                                             value="openai"
                                             class="peer sr-only"
                                         />
                                         <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
+                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all h-full"
                                         >
-                                            <div class="text-xl font-bold mb-1">
-                                                OpenAI
+                                            <div class="text-xl font-bold mb-2">
+                                                OpenAI-compatible
                                             </div>
-                                            <div class="text-sm text-gray-600">
-                                                GPT models
+                                            <div class="text-sm text-gray-600 mb-3">
+                                                GPT, Groq, Together, Fireworks, etc.
+                                            </div>
+                                            <div class="text-xs text-green-600 font-medium">
+                                                ✓ OAuth supported (OpenAI)
                                             </div>
                                         </div>
                                     </label>
                                     <label class="cursor-pointer">
                                         <input
                                             type="radio"
-                                            name="provider_type"
+                                            name="api_format"
                                             value="gemini"
                                             class="peer sr-only"
                                         />
                                         <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
+                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all h-full"
                                         >
-                                            <div class="text-xl font-bold mb-1">
+                                            <div class="text-xl font-bold mb-2">
                                                 Google Gemini
                                             </div>
-                                            <div class="text-sm text-gray-600">
-                                                Gemini models (AI Studio)
+                                            <div class="text-sm text-gray-600 mb-3">
+                                                Gemini models (includes Vertex AI)
                                             </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="vertex-ai"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Vertex AI
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Gemini, Claude, Llama on GCP
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="openrouter"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                OpenRouter
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                500+ models
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="groq"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Groq
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Ultra-fast ⚡
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="together"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Together AI
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Open source
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="fireworks"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Fireworks AI
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Fast inference
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="deepinfra"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Deepinfra
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Cost-effective
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="cerebras"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Cerebras
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Ultra-fast ⚡
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="nebius"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Nebius
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                AI platform
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="moonshot"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Moonshot AI
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                Kimi models
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="novita"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                NovitaAI
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                GPU cloud
-                                            </div>
-                                        </div>
-                                    </label>
-                                    <label class="cursor-pointer">
-                                        <input
-                                            type="radio"
-                                            name="provider_type"
-                                            value="baseten"
-                                            class="peer sr-only"
-                                        />
-                                        <div
-                                            class="p-6 border-2 border-gray-200 rounded-xl peer-checked:border-blue-600 peer-checked:bg-blue-50 hover:border-gray-300 transition-all"
-                                        >
-                                            <div class="text-xl font-bold mb-1">
-                                                Baseten
-                                            </div>
-                                            <div class="text-sm text-gray-600">
-                                                ML deployment
+                                            <div class="text-xs text-green-600 font-medium">
+                                                ✓ OAuth supported
                                             </div>
                                         </div>
                                     </label>
@@ -902,8 +638,172 @@
                                 </div>
                             </div>
 
-                            <!-- Step 3: Authentication -->
-                            <div class="card" id="auth-card">
+                            <!-- Step 3: Preset & Configuration -->
+                            <div class="card hidden" id="preset-card">
+                                <h2 class="text-2xl font-bold mb-8">
+                                    Provider Configuration
+                                </h2>
+
+                                <!-- Anthropic-compatible Presets -->
+                                <div id="anthropic-preset-section" class="hidden space-y-6">
+                                    <div>
+                                        <label class="label">Preset</label>
+                                        <select
+                                            id="anthropic-preset"
+                                            class="input-field"
+                                            onchange="applyAnthropicPreset()"
+                                        >
+                                            <option value="anthropic">Anthropic (api.anthropic.com)</option>
+                                            <option value="custom">Custom</option>
+                                            <option value="openrouter">OpenRouter (openrouter.ai)</option>
+                                            <option value="z.ai">z.ai (api.z.ai)</option>
+                                            <option value="minimax">Minimax</option>
+                                            <option value="kimi-coding">Kimi For Coding</option>
+                                            <option value="zenmux">ZenMux</option>
+                                        </select>
+                                        <div class="helper-text">
+                                            Select a preset to auto-fill base URL
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label class="label">Base URL</label>
+                                        <input
+                                            type="url"
+                                            id="anthropic-base-url"
+                                            class="input-field font-mono"
+                                            placeholder="https://api.anthropic.com"
+                                        />
+                                        <div class="helper-text">
+                                            Leave empty for default endpoint
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- OpenAI-compatible Presets -->
+                                <div id="openai-preset-section" class="hidden space-y-6">
+                                    <div>
+                                        <label class="label">Preset</label>
+                                        <select
+                                            id="openai-preset"
+                                            class="input-field"
+                                            onchange="applyOpenAIPreset()"
+                                        >
+                                            <option value="openai">OpenAI (api.openai.com)</option>
+                                            <option value="custom">Custom</option>
+                                            <option value="groq">Groq</option>
+                                            <option value="together">Together AI</option>
+                                            <option value="fireworks">Fireworks AI</option>
+                                            <option value="deepinfra">Deepinfra</option>
+                                            <option value="nebius">Nebius</option>
+                                            <option value="cerebras">Cerebras</option>
+                                            <option value="moonshot">Moonshot AI</option>
+                                            <option value="baseten">Baseten</option>
+                                            <option value="novita">NovitaAI</option>
+                                        </select>
+                                        <div class="helper-text">
+                                            Select a preset to auto-fill base URL and headers
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label class="label">Base URL</label>
+                                        <input
+                                            type="url"
+                                            id="openai-base-url"
+                                            class="input-field font-mono"
+                                            placeholder="https://api.openai.com/v1"
+                                        />
+                                        <div class="helper-text">
+                                            The base URL for the OpenAI-compatible API
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label class="label">Custom Headers (JSON, optional)</label>
+                                        <textarea
+                                            id="openai-headers"
+                                            class="input-field font-mono"
+                                            rows="3"
+                                            placeholder='{"X-Custom-Header": "value"}'
+                                        ></textarea>
+                                        <div class="helper-text">
+                                            JSON object with string key-value pairs
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Gemini Presets -->
+                                <div id="gemini-preset-section" class="hidden space-y-6">
+                                    <div>
+                                        <label class="label">Preset</label>
+                                        <select
+                                            id="gemini-preset"
+                                            class="input-field"
+                                            onchange="applyGeminiPreset()"
+                                        >
+                                            <option value="gemini">Google AI Studio</option>
+                                            <option value="vertex-ai">Vertex AI (GCP)</option>
+                                        </select>
+                                        <div class="helper-text">
+                                            Select Google AI Studio or Vertex AI
+                                        </div>
+                                    </div>
+
+                                    <!-- Vertex AI specific fields -->
+                                    <div id="vertex-ai-fields" class="hidden space-y-4">
+                                        <div>
+                                            <label class="label">Project ID</label>
+                                            <input
+                                                type="text"
+                                                id="vertex-project-id"
+                                                name="vertex_project_id"
+                                                class="input-field font-mono"
+                                                placeholder="my-gcp-project"
+                                            />
+                                            <div class="helper-text">
+                                                Your Google Cloud Project ID
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label class="label">Location</label>
+                                            <select
+                                                id="vertex-location"
+                                                name="vertex_location"
+                                                class="input-field"
+                                            >
+                                                <option value="us-central1">us-central1</option>
+                                                <option value="us-east1">us-east1</option>
+                                                <option value="us-east4">us-east4</option>
+                                                <option value="us-west1">us-west1</option>
+                                                <option value="us-west4">us-west4</option>
+                                                <option value="europe-west1">europe-west1</option>
+                                                <option value="europe-west2">europe-west2</option>
+                                                <option value="europe-west4">europe-west4</option>
+                                                <option value="asia-east1">asia-east1</option>
+                                                <option value="asia-northeast1">asia-northeast1</option>
+                                                <option value="asia-southeast1">asia-southeast1</option>
+                                            </select>
+                                            <div class="helper-text">
+                                                Region where Vertex AI is enabled
+                                            </div>
+                                        </div>
+
+                                        <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3">
+                                            <p class="text-sm text-yellow-800">
+                                                <strong>Authentication:</strong><br>
+                                                Vertex AI uses Application Default Credentials (ADC).
+                                                Before starting the server, run:<br>
+                                                <code class="bg-yellow-100 px-1 mt-1 block">gcloud auth application-default login</code>
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step 4: Authentication -->
+                            <div class="card hidden" id="auth-card">
                                 <h2
                                     class="text-2xl font-bold mb-8"
                                     id="auth-card-title"
@@ -911,144 +811,7 @@
                                     Choose authentication method
                                 </h2>
 
-                                <!-- Vertex AI Configuration (shown only for vertex-ai provider) -->
-                                <div id="vertex-ai-config" class="hidden">
-                                    <div
-                                        class="bg-blue-50 border-2 border-blue-200 rounded-xl p-6 mb-4"
-                                    >
-                                        <div class="flex items-start gap-4">
-                                            <div class="text-3xl">☁️</div>
-                                            <div class="flex-1">
-                                                <h3
-                                                    class="font-bold text-lg mb-4"
-                                                >
-                                                    Google Cloud Vertex AI
-                                                    Configuration
-                                                </h3>
-
-                                                <div class="space-y-4">
-                                                    <div>
-                                                        <label class="label"
-                                                            >Project ID</label
-                                                        >
-                                                        <input
-                                                            type="text"
-                                                            id="vertex-project-id"
-                                                            name="vertex_project_id"
-                                                            class="input-field font-mono"
-                                                            placeholder="my-gcp-project"
-                                                        />
-                                                        <div
-                                                            class="helper-text"
-                                                        >
-                                                            Your Google Cloud
-                                                            Project ID
-                                                        </div>
-                                                    </div>
-
-                                                    <div>
-                                                        <label class="label"
-                                                            >Location</label
-                                                        >
-                                                        <select
-                                                            id="vertex-location"
-                                                            name="vertex_location"
-                                                            class="input-field"
-                                                        >
-                                                            <option
-                                                                value="us-central1"
-                                                            >
-                                                                us-central1
-                                                            </option>
-                                                            <option
-                                                                value="us-east1"
-                                                            >
-                                                                us-east1
-                                                            </option>
-                                                            <option
-                                                                value="us-east4"
-                                                            >
-                                                                us-east4
-                                                            </option>
-                                                            <option
-                                                                value="us-west1"
-                                                            >
-                                                                us-west1
-                                                            </option>
-                                                            <option
-                                                                value="us-west4"
-                                                            >
-                                                                us-west4
-                                                            </option>
-                                                            <option
-                                                                value="europe-west1"
-                                                            >
-                                                                europe-west1
-                                                            </option>
-                                                            <option
-                                                                value="europe-west2"
-                                                            >
-                                                                europe-west2
-                                                            </option>
-                                                            <option
-                                                                value="europe-west4"
-                                                            >
-                                                                europe-west4
-                                                            </option>
-                                                            <option
-                                                                value="asia-east1"
-                                                            >
-                                                                asia-east1
-                                                            </option>
-                                                            <option
-                                                                value="asia-northeast1"
-                                                            >
-                                                                asia-northeast1
-                                                            </option>
-                                                            <option
-                                                                value="asia-southeast1"
-                                                            >
-                                                                asia-southeast1
-                                                            </option>
-                                                        </select>
-                                                        <div
-                                                            class="helper-text"
-                                                        >
-                                                            Region where Vertex
-                                                            AI is enabled
-                                                        </div>
-                                                    </div>
-
-                                                    <div
-                                                        class="bg-yellow-50 border-l-4 border-yellow-400 p-3"
-                                                    >
-                                                        <p
-                                                            class="text-sm text-yellow-800"
-                                                        >
-                                                            <strong
-                                                                >ℹ️
-                                                                Authentication:</strong
-                                                            ><br />
-                                                            Vertex AI uses
-                                                            Application Default
-                                                            Credentials (ADC).
-                                                            Before starting the
-                                                            server, run:<br />
-                                                            <code
-                                                                class="bg-yellow-100 px-1 mt-1 block"
-                                                                >gcloud auth
-                                                                application-default
-                                                                login</code
-                                                            >
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Auth Type Selector (hidden for vertex-ai) -->
+                                <!-- Auth Type Selector -->
                                 <div class="mb-8" id="auth-type-selector">
                                     <div class="grid grid-cols-2 gap-4">
                                         <label class="cursor-pointer">
@@ -1252,31 +1015,6 @@
                                     <div class="helper-text">
                                         For Claude Pro/Max subscribers only.
                                         Requires active subscription.
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Step 4: Optional -->
-                            <div class="card">
-                                <h2 class="text-2xl font-bold mb-4">
-                                    Add Settings
-                                </h2>
-                                <p class="text-gray-600 mb-8">
-                                    Optional - only if needed
-                                </p>
-                                <div>
-                                    <label class="label"
-                                        >Custom Endpoint (Optional)</label
-                                    >
-                                    <input
-                                        type="url"
-                                        name="base_url"
-                                        class="input-field font-mono"
-                                        placeholder="https://api.anthropic.com"
-                                    />
-                                    <div class="helper-text">
-                                        Only enter if you want to use a
-                                        different URL than the default endpoint
                                     </div>
                                 </div>
                             </div>
@@ -1982,6 +1720,9 @@ strip_match = false             # strip matched phrase (default: false)</pre>
         </div>
 
         <script>
+            // GitHub repository URL (must match REPO_URL in registry.rs)
+            const REPO_URL = "https://github.com/elidickinson/claude-code-mux";
+
             // Global State
             const appState = {
                 config: null,
@@ -2430,41 +2171,84 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     const form = document.getElementById("add-provider-form");
                     if (!form) return;
 
-                    // Fill form fields
-                    const providerTypeRadio = form.querySelector(
-                        `input[name="provider_type"][value="${provider.provider_type}"]`,
-                    );
-                    if (providerTypeRadio) {
-                        providerTypeRadio.checked = true;
-                        // Trigger updateOAuthLabel to show/hide Vertex AI config
-                        updateOAuthLabel();
+                    // Determine API format and preset from provider_type
+                    let apiFormat, presetName;
+                    const providerType = provider.provider_type;
+
+                    // Anthropic-compatible types
+                    if (["anthropic", "openrouter", "z.ai", "minimax", "kimi-coding", "zenmux"].includes(providerType)) {
+                        apiFormat = "anthropic";
+                        presetName = ANTHROPIC_PRESETS[providerType] ? providerType : "custom";
+                    }
+                    // OpenAI-compatible type
+                    else if (providerType === "openai") {
+                        apiFormat = "openai";
+                        presetName = "custom"; // Could try to detect preset from base_url
+                    }
+                    // Gemini types
+                    else if (providerType === "gemini") {
+                        apiFormat = "gemini";
+                        presetName = "gemini";
+                    }
+                    else if (providerType === "vertex-ai") {
+                        apiFormat = "gemini";
+                        presetName = "vertex-ai";
+                    }
+                    else {
+                        // Fallback to anthropic for unknown types
+                        console.warn(`Unknown provider_type "${providerType}", defaulting to anthropic format`);
+                        apiFormat = "anthropic";
+                        presetName = "custom";
                     }
 
-                    form.querySelector('[name="provider_name"]').value =
-                        provider.name;
+                    // Set API format radio
+                    const apiFormatRadio = form.querySelector(
+                        `input[name="api_format"][value="${apiFormat}"]`,
+                    );
+                    if (apiFormatRadio) {
+                        apiFormatRadio.checked = true;
+                    }
 
-                    // For Vertex AI provider, fill project_id and location
-                    if (provider.provider_type === "vertex-ai") {
-                        const vertexProjectIdField =
-                            document.getElementById("vertex-project-id");
-                        const vertexLocationField =
-                            document.getElementById("vertex-location");
-                        if (vertexProjectIdField && provider.project_id) {
-                            vertexProjectIdField.value = provider.project_id;
+                    // Set preset dropdown and fill fields based on format
+                    if (apiFormat === "anthropic") {
+                        const presetSelect = document.getElementById("anthropic-preset");
+                        if (presetSelect) presetSelect.value = presetName;
+                        const baseUrlField = document.getElementById("anthropic-base-url");
+                        if (baseUrlField) baseUrlField.value = provider.base_url || "";
+                    } else if (apiFormat === "openai") {
+                        const presetSelect = document.getElementById("openai-preset");
+                        if (presetSelect) presetSelect.value = presetName;
+                        const baseUrlField = document.getElementById("openai-base-url");
+                        if (baseUrlField) baseUrlField.value = provider.base_url || "";
+                        const headersField = document.getElementById("openai-headers");
+                        if (headersField && provider.headers) {
+                            headersField.value = JSON.stringify(provider.headers, null, 2);
                         }
-                        if (vertexLocationField && provider.location) {
-                            vertexLocationField.value = provider.location;
+                    } else if (apiFormat === "gemini") {
+                        const presetSelect = document.getElementById("gemini-preset");
+                        if (presetSelect) presetSelect.value = presetName;
+                        if (presetName === "vertex-ai") {
+                            const vertexProjectIdField = document.getElementById("vertex-project-id");
+                            const vertexLocationField = document.getElementById("vertex-location");
+                            if (vertexProjectIdField && provider.project_id) {
+                                vertexProjectIdField.value = provider.project_id;
+                            }
+                            if (vertexLocationField && provider.location) {
+                                vertexLocationField.value = provider.location;
+                            }
                         }
-                    } else {
-                        // For other providers, fill API key
-                        form.querySelector('[name="api_key"]').value =
-                            provider.api_key || "";
+                    }
 
-                        const baseUrlField =
-                            form.querySelector('[name="base_url"]');
-                        if (baseUrlField && provider.base_url) {
-                            baseUrlField.value = provider.base_url;
-                        }
+                    // Update UI again after setting preset
+                    updateProviderUI();
+
+                    // Set provider name
+                    form.querySelector('[name="provider_name"]').value = provider.name;
+
+                    // Set API key for non-Vertex AI providers
+                    if (providerType !== "vertex-ai") {
+                        const apiKeyField = form.querySelector('[name="api_key"]');
+                        if (apiKeyField) apiKeyField.value = provider.api_key || "";
                     }
 
                     // Update UI labels
@@ -2505,6 +2289,8 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                             submitBtn.textContent = "Add Provider";
                         }
                     }
+                    // Update provider UI after form reset
+                    updateProviderUI();
                 }, 100);
             }
 
@@ -3318,11 +3104,9 @@ strip_match = false             # strip matched phrase (default: false)</pre>
 
                     const formData = new FormData(e.target);
                     const providerName = formData.get("provider_name")?.trim();
-                    const providerType = formData.get("provider_type")?.trim();
-                    const authType =
-                        formData.get("auth_type")?.trim() || "apikey";
+                    const apiFormat = formData.get("api_format")?.trim();
+                    const authType = formData.get("auth_type")?.trim() || "apikey";
                     const apiKey = formData.get("api_key")?.trim();
-                    const baseUrl = formData.get("base_url")?.trim();
 
                     // Validation
                     if (!providerName) {
@@ -3330,9 +3114,31 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         return;
                     }
 
-                    if (!providerType) {
-                        notifyError("Please select a provider type.");
+                    if (!apiFormat) {
+                        notifyError("Please select an API format.");
                         return;
+                    }
+
+                    // Determine provider_type and base_url from format + preset
+                    let providerType;
+                    let baseUrl = "";
+                    let headersJson = "";
+
+                    if (apiFormat === "anthropic") {
+                        const presetName = document.getElementById("anthropic-preset")?.value || "anthropic";
+                        const preset = ANTHROPIC_PRESETS[presetName];
+                        providerType = preset?.provider_type || "anthropic";
+                        baseUrl = document.getElementById("anthropic-base-url")?.value?.trim() || "";
+                    } else if (apiFormat === "openai") {
+                        const presetName = document.getElementById("openai-preset")?.value || "openai";
+                        const preset = OPENAI_PRESETS[presetName];
+                        providerType = preset?.provider_type || "openai";
+                        baseUrl = document.getElementById("openai-base-url")?.value?.trim() || "";
+                        headersJson = document.getElementById("openai-headers")?.value?.trim() || "";
+                    } else if (apiFormat === "gemini") {
+                        const presetName = document.getElementById("gemini-preset")?.value || "gemini";
+                        const preset = GEMINI_PRESETS[presetName];
+                        providerType = preset?.provider_type || "gemini";
                     }
 
                     // For Vertex AI, validate project_id and location
@@ -3358,7 +3164,7 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         }
                     }
 
-                    // For API key auth, require API key
+                    // For API key auth, require API key (except Vertex AI)
                     if (
                         authType === "apikey" &&
                         !apiKey &&
@@ -3384,6 +3190,16 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         models: [], // Empty array - models are defined in model mappings
                         enabled: true,
                     };
+
+                    // Parse headers JSON if provided (OpenAI-compatible only)
+                    if (apiFormat === "openai" && headersJson) {
+                        try {
+                            providerData.headers = JSON.parse(headersJson);
+                        } catch (error) {
+                            notifyError("Invalid JSON format for headers. Please check your input.");
+                            return;
+                        }
+                    }
 
                     // Add provider-specific fields
                     if (providerType === "vertex-ai") {
@@ -3815,83 +3631,154 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                 document.getElementById("test-response-text").textContent = "";
             }
 
-            // OAuth Functions
-            function updateOAuthLabel() {
-                const providerType = document.querySelector(
-                    'input[name="provider_type"]:checked',
+            // Presets for Anthropic-compatible providers
+            // Maps preset name to { url, provider_type }
+            const ANTHROPIC_PRESETS = {
+                "custom": { url: "", provider_type: "anthropic" },
+                "anthropic": { url: "", provider_type: "anthropic" },
+                "openrouter": { url: "https://openrouter.ai/api/v1", provider_type: "openrouter" },
+                "z.ai": { url: "https://api.z.ai/api/anthropic", provider_type: "z.ai" },
+                "minimax": { url: "", provider_type: "minimax" },
+                "kimi-coding": { url: "", provider_type: "kimi-coding" },
+                "zenmux": { url: "", provider_type: "zenmux" },
+            };
+
+            // Presets for OpenAI-compatible providers
+            const OPENAI_PRESETS = {
+                "custom": { url: "", headers: {}, provider_type: "openai" },
+                "openai": { url: "https://api.openai.com/v1", headers: {}, provider_type: "openai" },
+                "groq": { url: "https://api.groq.com/openai/v1", headers: {}, provider_type: "openai" },
+                "together": { url: "https://api.together.xyz/v1", headers: {}, provider_type: "openai" },
+                "fireworks": { url: "https://api.fireworks.ai/inference/v1", headers: {}, provider_type: "openai" },
+                "deepinfra": { url: "https://api.deepinfra.com/v1/openai", headers: {}, provider_type: "openai" },
+                "nebius": { url: "https://api.studio.nebius.ai/v1", headers: {}, provider_type: "openai" },
+                "cerebras": { url: "https://api.cerebras.ai/v1", headers: {}, provider_type: "openai" },
+                "moonshot": { url: "https://api.moonshot.cn/v1", headers: {}, provider_type: "openai" },
+                "baseten": { url: "https://inference.baseten.co/v1", headers: {}, provider_type: "openai" },
+                "novita": { url: "https://api.novita.ai/v3/openai", headers: { "X-Novita-Source": "claude-code-mux" }, provider_type: "openai" },
+            };
+
+            // Presets for Gemini
+            const GEMINI_PRESETS = {
+                "gemini": { provider_type: "gemini" },
+                "vertex-ai": { provider_type: "vertex-ai" },
+            };
+
+            // Update UI based on selected API format
+            function updateProviderUI() {
+                const apiFormat = document.querySelector(
+                    'input[name="api_format"]:checked',
                 )?.value;
+
+                // Preset sections
+                const anthropicSection = document.getElementById("anthropic-preset-section");
+                const openaiSection = document.getElementById("openai-preset-section");
+                const geminiSection = document.getElementById("gemini-preset-section");
+                const presetCard = document.getElementById("preset-card");
+
+                // Auth elements
+                const authCard = document.getElementById("auth-card");
+                const authTypeSelector = document.getElementById("auth-type-selector");
+                const authCardTitle = document.getElementById("auth-card-title");
                 const oauthLabel = document.getElementById("oauth-label-title");
-                const oauthDescription = document.getElementById(
-                    "oauth-label-description",
-                );
-                const step1Instruction = document.getElementById(
-                    "oauth-step1-instruction",
-                );
-                const step2Instructions = document.getElementById(
-                    "oauth-step2-instructions",
-                );
+                const oauthDescription = document.getElementById("oauth-label-description");
+                const step1Instruction = document.getElementById("oauth-step1-instruction");
+                const step2Instructions = document.getElementById("oauth-step2-instructions");
+                const apiKeySection = document.getElementById("api-key-section");
 
-                const vertexAiConfig =
-                    document.getElementById("vertex-ai-config");
-                const authTypeSelector =
-                    document.getElementById("auth-type-selector");
-                const authCardTitle =
-                    document.getElementById("auth-card-title");
+                // Hide all preset sections first
+                anthropicSection?.classList.add("hidden");
+                openaiSection?.classList.add("hidden");
+                geminiSection?.classList.add("hidden");
 
-                // Show/hide Vertex AI config based on provider type
+                // Show/hide preset card based on format
+                if (!apiFormat) {
+                    presetCard?.classList.add("hidden");
+                    authCard?.classList.add("hidden");
+                    return;
+                }
+
+                presetCard?.classList.remove("hidden");
+                authCard?.classList.remove("hidden");
+
+                // Get current preset selections
+                const anthropicPreset = document.getElementById("anthropic-preset")?.value || "anthropic";
+                const openaiPreset = document.getElementById("openai-preset")?.value || "openai";
+                const geminiPreset = document.getElementById("gemini-preset")?.value || "gemini";
+
+                // Determine if OAuth is supported based on format + preset
+                let supportsOAuth = false;
+                let isVertexAI = false;
+
+                if (apiFormat === "anthropic") {
+                    anthropicSection?.classList.remove("hidden");
+                    supportsOAuth = (anthropicPreset === "anthropic" || anthropicPreset === "custom");
+                } else if (apiFormat === "openai") {
+                    openaiSection?.classList.remove("hidden");
+                    supportsOAuth = (openaiPreset === "openai");
+                } else if (apiFormat === "gemini") {
+                    geminiSection?.classList.remove("hidden");
+                    supportsOAuth = (geminiPreset === "gemini");
+                    isVertexAI = (geminiPreset === "vertex-ai");
+                }
+
+                // Update Vertex AI fields visibility
+                const vertexAiFields = document.getElementById("vertex-ai-fields");
                 const vertexProjectIdField = document.getElementById("vertex-project-id");
                 const vertexLocationField = document.getElementById("vertex-location");
 
-                if (providerType === "vertex-ai") {
-                    vertexAiConfig.classList.remove("hidden");
-                    authTypeSelector.classList.add("hidden");
-                    authCardTitle.textContent = "Vertex AI Configuration";
-
-                    // Add required attributes for Vertex AI
-                    if (vertexProjectIdField) vertexProjectIdField.setAttribute("required", "required");
-                    if (vertexLocationField) vertexLocationField.setAttribute("required", "required");
-
-                    return; // Skip OAuth label updates
+                if (isVertexAI) {
+                    vertexAiFields?.classList.remove("hidden");
+                    vertexProjectIdField?.setAttribute("required", "required");
+                    vertexLocationField?.setAttribute("required", "required");
+                    // Hide auth card for Vertex AI (uses ADC)
+                    authCard?.classList.add("hidden");
+                    return;
                 } else {
-                    vertexAiConfig.classList.add("hidden");
-                    authTypeSelector.classList.remove("hidden");
-                    authCardTitle.textContent = "Choose authentication method";
-
-                    // Remove required attributes when not Vertex AI
-                    if (vertexProjectIdField) vertexProjectIdField.removeAttribute("required");
-                    if (vertexLocationField) vertexLocationField.removeAttribute("required");
+                    vertexAiFields?.classList.add("hidden");
+                    vertexProjectIdField?.removeAttribute("required");
+                    vertexLocationField?.removeAttribute("required");
                 }
 
-                if (providerType === "openai") {
+                // Update auth type selector visibility
+                if (supportsOAuth) {
+                    authTypeSelector?.classList.remove("hidden");
+                    authCardTitle.textContent = "Choose authentication method";
+                } else {
+                    authTypeSelector?.classList.add("hidden");
+                    authCardTitle.textContent = "API Key";
+                    // Force API key auth
+                    const apiKeyRadio = document.querySelector('input[name="auth_type"][value="apikey"]');
+                    if (apiKeyRadio) apiKeyRadio.checked = true;
+                    apiKeySection?.classList.remove("hidden");
+                    document.getElementById("oauth-section")?.classList.add("hidden");
+                }
+
+                // Update OAuth labels based on format
+                if (apiFormat === "openai" && openaiPreset === "openai") {
                     oauthLabel.textContent = "OAuth (ChatGPT Plus/Pro)";
-                    oauthDescription.textContent =
-                        "Free for ChatGPT Plus/Pro subscribers";
-                    step1Instruction.textContent =
-                        "Click the button below to authenticate with your ChatGPT Plus/Pro account.";
+                    oauthDescription.textContent = "Free for ChatGPT Plus/Pro subscribers";
+                    step1Instruction.textContent = "Click the button below to authenticate with your ChatGPT Plus/Pro account.";
                     step2Instructions.innerHTML = `
                         <li>Log in to your ChatGPT Plus/Pro account</li>
                         <li>Click "Allow" to authorize</li>
                         <li>Copy the authorization code</li>
                         <li>Paste it in the field below</li>
                     `;
-                } else if (providerType === "gemini") {
+                } else if (apiFormat === "gemini") {
                     oauthLabel.textContent = "OAuth (Google AI Pro/Ultra)";
-                    oauthDescription.textContent =
-                        "Free for Google AI Pro/Ultra subscribers";
-                    step1Instruction.textContent =
-                        "Click the button below to authenticate with your Google account (AI Pro/Ultra).";
+                    oauthDescription.textContent = "Free for Google AI Pro/Ultra subscribers";
+                    step1Instruction.textContent = "Click the button below to authenticate with your Google account (AI Pro/Ultra).";
                     step2Instructions.innerHTML = `
                         <li>Log in to your Google account</li>
                         <li>Click "Allow" to authorize</li>
                         <li>Copy the authorization code</li>
                         <li>Paste it in the field below</li>
                     `;
-                } else {
+                } else if (apiFormat === "anthropic") {
                     oauthLabel.textContent = "OAuth (Claude Pro/Max)";
-                    oauthDescription.textContent =
-                        "Free for Claude Max subscribers";
-                    step1Instruction.textContent =
-                        "Click the button below to authenticate with your Claude Pro/Max account.";
+                    oauthDescription.textContent = "Free for Claude Max subscribers";
+                    step1Instruction.textContent = "Click the button below to authenticate with your Claude Pro/Max account.";
                     step2Instructions.innerHTML = `
                         <li>Log in to your Claude Pro/Max account</li>
                         <li>Click "Allow" to authorize</li>
@@ -3899,6 +3786,53 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         <li>Paste it in the field below</li>
                     `;
                 }
+            }
+
+            function applyAnthropicPreset() {
+                const presetSelect = document.getElementById("anthropic-preset");
+                const presetName = presetSelect?.value;
+                const preset = ANTHROPIC_PRESETS[presetName];
+
+                if (!preset) return;
+
+                const baseUrlInput = document.getElementById("anthropic-base-url");
+                if (baseUrlInput) {
+                    baseUrlInput.value = preset.url || "";
+                }
+
+                // Update OAuth visibility when preset changes
+                updateProviderUI();
+            }
+
+            function applyOpenAIPreset() {
+                const presetSelect = document.getElementById("openai-preset");
+                const presetName = presetSelect?.value;
+                const preset = OPENAI_PRESETS[presetName];
+
+                if (!preset) return;
+
+                const baseUrlInput = document.getElementById("openai-base-url");
+                const headersTextarea = document.getElementById("openai-headers");
+
+                // Fill base URL
+                if (baseUrlInput) {
+                    baseUrlInput.value = preset.url || "";
+                }
+
+                // Fill headers as JSON
+                if (headersTextarea) {
+                    headersTextarea.value = Object.keys(preset.headers).length > 0
+                        ? JSON.stringify(preset.headers, null, 2)
+                        : "";
+                }
+
+                // Update OAuth visibility when preset changes
+                updateProviderUI();
+            }
+
+            function applyGeminiPreset() {
+                // Update UI to show/hide Vertex AI fields
+                updateProviderUI();
             }
 
             function toggleAuthMethod() {
@@ -4054,30 +3988,30 @@ strip_match = false             # strip matched phrase (default: false)</pre>
 
             async function startOAuthFlow() {
                 try {
-                    // Determine oauth_type based on provider type
-                    const providerType = document.querySelector(
-                        'input[name="provider_type"]:checked',
+                    // Determine oauth_type based on API format
+                    const apiFormat = document.querySelector(
+                        'input[name="api_format"]:checked',
                     )?.value;
                     let oauth_type = "max"; // default to anthropic max
 
-                    if (providerType === "openai") {
+                    if (apiFormat === "openai") {
                         oauth_type = "openai-codex";
-                    } else if (providerType === "gemini") {
+                    } else if (apiFormat === "gemini") {
                         oauth_type = "gemini";
                     }
 
-                    // Update instruction text based on provider type
+                    // Update instruction text based on API format
                     const instructionEl = document.getElementById(
                         "oauth-step1-instruction",
                     );
-                    if (providerType === "gemini") {
+                    if (apiFormat === "gemini") {
                         instructionEl.innerHTML = `
                             <p class="mb-2">Click the button below to authenticate with your Google account.</p>
                             <div class="bg-yellow-50 border-l-4 border-yellow-400 p-3 mt-2">
                                 <p class="text-sm text-yellow-800">
-                                    <strong>ℹ️ Google Cloud Project ID:</strong><br>
-                                    • <strong>Individual accounts</strong>: No project ID needed<br>
-                                    • <strong>Workspace/licensed users</strong>: Set <code class="bg-yellow-100 px-1">GOOGLE_CLOUD_PROJECT</code> environment variable before starting server
+                                    <strong>Google Cloud Project ID:</strong><br>
+                                    - <strong>Individual accounts</strong>: No project ID needed<br>
+                                    - <strong>Workspace/licensed users</strong>: Set <code class="bg-yellow-100 px-1">GOOGLE_CLOUD_PROJECT</code> environment variable before starting server
                                 </p>
                             </div>
                         `;
@@ -4098,8 +4032,8 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     const { url, verifier } = data;
 
                     // Store verifier and oauth_type for later use
-                    console.log("🔐 Storing OAuth verifier:", verifier);
-                    console.log("🔐 Storing OAuth type:", oauth_type);
+                    console.log("Storing OAuth verifier:", verifier);
+                    console.log("Storing OAuth type:", oauth_type);
                     sessionStorage.setItem("oauth_verifier", verifier);
                     sessionStorage.setItem("oauth_type", oauth_type);
 
@@ -4110,18 +4044,18 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         "width=600,height=800",
                     );
 
-                    // Update step 2 instructions based on provider type
+                    // Update step 2 instructions based on API format
                     const step2InstructionsEl = document.getElementById(
                         "oauth-step2-instructions",
                     );
-                    if (providerType === "gemini") {
+                    if (apiFormat === "gemini") {
                         step2InstructionsEl.innerHTML = `
                             <li>Log in to your Google account</li>
                             <li>Click "Allow" to authorize</li>
                             <li>Copy the authorization code</li>
                             <li>Paste it in the field below</li>
                         `;
-                    } else if (providerType === "openai") {
+                    } else if (apiFormat === "openai") {
                         step2InstructionsEl.innerHTML = `
                             <li>Log in to your ChatGPT Plus/Pro account</li>
                             <li>Click "Allow" to authorize</li>
@@ -4252,16 +4186,16 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                 setupRouterAutoSave();
                 setupSettingsAutoSave();
 
-                // Setup provider type change listeners to update OAuth label
-                const providerTypeInputs = document.querySelectorAll(
-                    'input[name="provider_type"]',
+                // Setup API format change listeners to update provider UI
+                const apiFormatInputs = document.querySelectorAll(
+                    'input[name="api_format"]',
                 );
-                providerTypeInputs.forEach((input) => {
-                    input.addEventListener("change", updateOAuthLabel);
+                apiFormatInputs.forEach((input) => {
+                    input.addEventListener("change", updateProviderUI);
                 });
 
-                // Initialize OAuth label based on current selection
-                updateOAuthLabel();
+                // Initialize provider UI based on current selection
+                updateProviderUI();
             });
 
             // Handle browser back/forward buttons

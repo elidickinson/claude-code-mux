@@ -5,6 +5,12 @@ use crate::cli::ModelConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Default base URL for OpenAI-compatible API
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// GitHub repository URL (used in HTTP-Referer headers)
+const REPO_URL: &str = "https://github.com/elidickinson/claude-code-mux";
+
 /// Provider registry that manages all configured providers
 pub struct ProviderRegistry {
     /// Map of provider name -> provider instance
@@ -56,15 +62,112 @@ impl ProviderRegistry {
 
             // Create provider instance based on type
             let provider: Box<dyn AnthropicProvider> = match config.provider_type.as_str() {
-                // OpenAI
-                "openai" => Box::new(OpenAIProvider::new(
+                // OpenAI-compatible providers (unified with custom headers support)
+                "openai" => {
+                    let base_url = config.base_url.clone()
+                        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
+                    let custom_headers: Vec<(String, String)> = config.headers
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+
+                    Box::new(OpenAIProvider::with_headers(
+                        config.name.clone(),
+                        api_key,
+                        base_url,
+                        config.models.clone(),
+                        custom_headers,
+                        config.oauth_provider.clone(),
+                        token_store.clone(),
+                    ))
+                }
+
+                // OpenRouter (Anthropic-compatible)
+                "openrouter" => Box::new(AnthropicCompatibleProvider::with_headers(
                     config.name.clone(),
                     api_key,
-                    config.base_url.clone().unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                    config.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api".to_string()),
                     config.models.clone(),
+                    vec![
+                        ("HTTP-Referer".to_string(), REPO_URL.to_string()),
+                        ("X-Title".to_string(), "Claude Code Mux".to_string()),
+                    ],
                     config.oauth_provider.clone(),
                     token_store.clone(),
                 )),
+
+                // Deprecated aliases for OpenAI-compatible providers
+                // These will be removed in a future version
+                // NOTE: Preset URLs/headers here must match OPENAI_PRESETS in admin.html
+                provider @ ("deepinfra" | "novita" | "baseten"
+                    | "together" | "fireworks" | "groq" | "nebius"
+                    | "cerebras" | "moonshot") => {
+                    tracing::warn!(
+                        "Provider type '{}' is deprecated. Migrate to: provider_type = \"openai\", base_url = \"<url>\"[, headers = {{ \"X-Header\" = \"value\" }}]",
+                        provider
+                    );
+
+                    let (base_url, headers) = match provider {
+                        "deepinfra" => (
+                            Some("https://api.deepinfra.com/v1/openai".to_string()),
+                            None,
+                        ),
+                        "novita" => (
+                            Some("https://api.novita.ai/v3/openai".to_string()),
+                            Some(vec![
+                                ("X-Novita-Source".to_string(), "claude-code-mux".to_string()),
+                            ].into_iter().collect()),
+                        ),
+                        "baseten" => (
+                            Some("https://inference.baseten.co/v1".to_string()),
+                            None,
+                        ),
+                        "together" => (
+                            Some("https://api.together.xyz/v1".to_string()),
+                            None,
+                        ),
+                        "fireworks" => (
+                            Some("https://api.fireworks.ai/inference/v1".to_string()),
+                            None,
+                        ),
+                        "groq" => (
+                            Some("https://api.groq.com/openai/v1".to_string()),
+                            None,
+                        ),
+                        "nebius" => (
+                            Some("https://api.studio.nebius.ai/v1".to_string()),
+                            None,
+                        ),
+                        "cerebras" => (
+                            Some("https://api.cerebras.ai/v1".to_string()),
+                            None,
+                        ),
+                        "moonshot" => (
+                            Some("https://api.moonshot.cn/v1".to_string()),
+                            None,
+                        ),
+                        _ => unreachable!(),
+                    };
+
+                    // Use config headers if provided, otherwise use preset headers
+                    let headers = config.headers.as_ref().or(headers.as_ref());
+                    let headers_vec: Vec<(String, String)> = headers
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect();
+
+                    Box::new(OpenAIProvider::with_headers(
+                        config.name.clone(),
+                        api_key,
+                        base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string()),
+                        config.models.clone(),
+                        headers_vec,
+                        config.oauth_provider.clone(),
+                        token_store.clone(),
+                    ))
+                }
 
                 // Anthropic-compatible providers
                 "anthropic" => Box::new(AnthropicCompatibleProvider::new(
@@ -94,58 +197,6 @@ impl ProviderRegistry {
                     api_key,
                     config.models.clone(),
                     token_store.clone(),
-                )),
-
-                // OpenAI-compatible providers
-                "openrouter" => Box::new(OpenAIProvider::openrouter(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "deepinfra" => Box::new(OpenAIProvider::deepinfra(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "novita" => Box::new(OpenAIProvider::novita(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "baseten" => Box::new(OpenAIProvider::baseten(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "together" => Box::new(OpenAIProvider::together(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "fireworks" => Box::new(OpenAIProvider::fireworks(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "groq" => Box::new(OpenAIProvider::groq(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "nebius" => Box::new(OpenAIProvider::nebius(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "cerebras" => Box::new(OpenAIProvider::cerebras(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
-                )),
-                "moonshot" => Box::new(OpenAIProvider::moonshot(
-                    config.name.clone(),
-                    api_key,
-                    config.models.clone(),
                 )),
 
                 // Google Gemini (supports OAuth, API Key, Vertex AI)

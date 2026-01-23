@@ -175,20 +175,9 @@ impl AnthropicCompatibleProvider {
         oauth_provider: Option<String>,
         token_store: Option<TokenStore>,
     ) -> Self {
-        Self {
-            name,
-            api_key,
-            base_url,
-            client: Client::new(),
-            models,
-            custom_headers: Vec::new(),
-            oauth_provider,
-            token_store,
-        }
+        Self::with_headers(name, api_key, base_url, models, Vec::new(), oauth_provider, token_store)
     }
 
-    /// Create with custom headers
-    #[allow(dead_code)]
     pub fn with_headers(
         name: String,
         api_key: String,
@@ -261,36 +250,6 @@ impl AnthropicCompatibleProvider {
     /// Check if using OAuth authentication
     fn is_oauth(&self) -> bool {
         self.oauth_provider.is_some() && self.token_store.is_some()
-    }
-
-    /// Create Anthropic Native provider
-    #[allow(dead_code)]
-    pub fn anthropic(api_key: String, models: Vec<String>) -> Self {
-        Self::new(
-            "anthropic".to_string(),
-            api_key,
-            "https://api.anthropic.com".to_string(),
-            models,
-            None,
-            None,
-        )
-    }
-
-    /// Create OpenRouter provider
-    #[allow(dead_code)]
-    pub fn openrouter(api_key: String, models: Vec<String>) -> Self {
-        Self::with_headers(
-            "openrouter".to_string(),
-            api_key,
-            "https://openrouter.ai/api".to_string(),
-            models,
-            vec![
-                ("HTTP-Referer".to_string(), "https://github.com/bahkchanhee/claude-code-mux".to_string()),
-                ("X-Title".to_string(), "Claude Code Mux".to_string()),
-            ],
-            None,
-            None,
-        )
     }
 
     /// Create z.ai provider (Anthropic-compatible)
