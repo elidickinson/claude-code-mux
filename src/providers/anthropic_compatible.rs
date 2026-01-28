@@ -399,6 +399,16 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
         let is_anthropic = self.base_url.contains("anthropic.com");
         sanitize_tool_use_ids(&mut request, is_anthropic);
 
+        // Strip metadata for non-Anthropic providers.
+        // Claude Code sends metadata.user_id values that can exceed 150 characters (e.g.,
+        // "user_{hash}_account_{uuid}_session_{uuid}"). OpenRouter and other Anthropic-compatible
+        // providers may have validation limits on this field (OpenRouter enforces 128 chars max).
+        // Since these providers likely ignore Anthropic-specific metadata anyway, we strip it
+        // entirely to avoid validation errors.
+        if !is_anthropic {
+            request.metadata = None;
+        }
+
         // Get authentication header value (API key or OAuth token)
         let auth_value = self.get_auth_header().await?;
 
@@ -514,6 +524,11 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
         let mut request = request;
         let is_anthropic = self.base_url.contains("anthropic.com");
         sanitize_tool_use_ids(&mut request, is_anthropic);
+
+        // Strip metadata for non-Anthropic providers (see comment in send_message for details)
+        if !is_anthropic {
+            request.metadata = None;
+        }
 
         // Get authentication header value
         let auth_value = self.get_auth_header().await?;
