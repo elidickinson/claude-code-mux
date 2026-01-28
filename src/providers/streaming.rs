@@ -162,6 +162,7 @@ pub struct LoggingSseStream<S> {
     #[pin]
     inner: S,
     provider_name: String,
+    model_name: String,
     buffer: Vec<u8>,
     logged_message_start: bool,
     start_time: std::time::Instant,
@@ -173,10 +174,11 @@ pub struct LoggingSseStream<S> {
 }
 
 impl<S> LoggingSseStream<S> {
-    pub fn new(stream: S, provider_name: String) -> Self {
+    pub fn new(stream: S, provider_name: String, model_name: String) -> Self {
         Self {
             inner: stream,
             provider_name,
+            model_name,
             buffer: Vec::new(),
             logged_message_start: false,
             start_time: std::time::Instant::now(),
@@ -232,10 +234,16 @@ where
                                     }
                                 }
                                 Some("message_delta") => {
-                                    // Track output tokens
+                                    // Track tokens (output_tokens always, input_tokens for OpenAI providers)
                                     if let Ok(json) = serde_json::from_str::<Value>(&event.data) {
                                         if let Some(usage) = json.get("usage") {
                                             *this.output_tokens += usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                                            // OpenAI providers include input_tokens in message_delta instead of message_start
+                                            if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                                                if input > 0 && *this.input_tokens == 0 {
+                                                    *this.input_tokens = input;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -282,9 +290,14 @@ where
                 } else {
                     String::new()
                 };
+                // Strip common prefixes from model name for cleaner logs
+                let model_display = this.model_name
+                    .strip_prefix("accounts/fireworks/models/")
+                    .unwrap_or(this.model_name);
                 tracing::info!(
-                    "📊 {} {}ms ttft:{}ms {:.1}t/s out:{} in:{}{}",
+                    "📊 {}:{} {}ms ttft:{}ms {:.1}t/s out:{} in:{}{}",
                     this.provider_name,
+                    model_display,
                     total_time.as_millis(),
                     ttft.as_millis(),
                     tok_per_sec,

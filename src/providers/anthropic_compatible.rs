@@ -543,7 +543,7 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
         // Wrap stream with logging to capture cache statistics
         use crate::providers::streaming::LoggingSseStream;
         let byte_stream = response.bytes_stream().map_err(|e| ProviderError::HttpError(e));
-        let logging_stream = LoggingSseStream::new(byte_stream, self.name.clone());
+        let logging_stream = LoggingSseStream::new(byte_stream, self.name.clone(), request.model.clone());
 
         // Return stream with headers for forwarding
         Ok(StreamResponse {

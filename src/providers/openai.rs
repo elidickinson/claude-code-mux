@@ -13,6 +13,12 @@ use secrecy::ExposeSecret;
 /// Source: https://github.com/openai/codex (rust-v0.58.0)
 const CODEX_INSTRUCTIONS: &str = include_str!("codex_instructions.md");
 
+/// OpenAI stream_options for requesting usage in streaming responses
+#[derive(Debug, Serialize)]
+struct OpenAIStreamOptions {
+    include_usage: bool,
+}
+
 /// OpenAI Chat Completions request format
 #[derive(Debug, Serialize)]
 struct OpenAIRequest {
@@ -28,6 +34,8 @@ struct OpenAIRequest {
     stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OpenAIStreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAITool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -205,6 +213,19 @@ struct OpenAIStreamChunk {
     choices: Vec<OpenAIStreamChoice>,
     #[serde(default)]
     created: u64,
+    /// Usage data (only present in final chunk when stream_options.include_usage=true)
+    #[serde(default)]
+    usage: Option<OpenAIStreamUsage>,
+}
+
+/// Usage data from OpenAI streaming response
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct OpenAIStreamUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    #[serde(default)]
+    total_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -707,6 +728,13 @@ impl OpenAIProvider {
                 .collect()
         });
 
+        // Request usage data in streaming responses
+        let stream_options = if request.stream == Some(true) {
+            Some(OpenAIStreamOptions { include_usage: true })
+        } else {
+            None
+        };
+
         Ok(OpenAIRequest {
             model: request.model.clone(),
             messages: openai_messages,
@@ -715,6 +743,7 @@ impl OpenAIProvider {
             top_p: request.top_p,
             stop: request.stop_sequences.clone(),
             stream: request.stream,
+            stream_options,
             tools,
             tool_choice: None, // TODO: Add tool_choice support if needed
         })
@@ -1076,6 +1105,10 @@ impl OpenAIProvider {
                         _ => "end_turn"
                     }
                 };
+                // Extract token counts from usage if available (requires stream_options.include_usage)
+                let (input_tokens, output_tokens) = chunk.usage.as_ref()
+                    .map(|u| (u.prompt_tokens, u.completion_tokens))
+                    .unwrap_or((0, 0));
                 let message_delta = serde_json::json!({
                     "type": "message_delta",
                     "delta": {
@@ -1083,7 +1116,8 @@ impl OpenAIProvider {
                         "stop_sequence": null
                     },
                     "usage": {
-                        "output_tokens": 0
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens
                     }
                 });
                 output.push_str(&format!("event: message_delta\ndata: {}\n\n", message_delta));
@@ -1093,7 +1127,7 @@ impl OpenAIProvider {
                     "type": "message_stop"
                 });
                 output.push_str(&format!("event: message_stop\ndata: {}\n\n", message_stop));
-                tracing::debug!("✅ Sent message_stop event, stream_ended=true");
+                tracing::debug!("✅ Sent message_stop event, stream_ended=true, output_tokens={}", output_tokens);
                 tracing::debug!("📤 Termination sequence:\n{}", output);
             }
         }
@@ -1421,8 +1455,9 @@ impl AnthropicProvider for OpenAIProvider {
         // Convert response bytes stream to SSE events
         let sse_stream = SseStream::new(response.bytes_stream());
 
-        // Capture provider name for error logging in the stream
+        // Capture provider/model names for logging
         let provider_name = self.name.clone();
+        let model_name = request.model.clone();
 
         // Transform OpenAI SSE events to Anthropic format
         let transformed_stream = sse_stream.then(move |result| {
@@ -1563,8 +1598,12 @@ impl AnthropicProvider for OpenAIProvider {
         }))
         .try_filter(|bytes| futures::future::ready(!bytes.is_empty()));
 
+        // Wrap with logging stream to capture token stats
+        use crate::providers::streaming::LoggingSseStream;
+        let logging_stream = LoggingSseStream::new(finalized_stream, self.name.clone(), model_name);
+
         Ok(StreamResponse {
-            stream: Box::pin(finalized_stream),
+            stream: Box::pin(logging_stream),
             headers: HashMap::new(), // OpenAI doesn't have rate limit headers to forward
         })
     }
