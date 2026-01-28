@@ -1384,6 +1384,11 @@ impl AnthropicProvider for OpenAIProvider {
             }
         }
 
+        // Add custom headers (for OpenRouter, NovitaAI, etc.)
+        for (key, value) in &self.custom_headers {
+            req_builder = req_builder.header(key, value);
+        }
+
         let response = req_builder
             .json(&request_body)
             .send()
