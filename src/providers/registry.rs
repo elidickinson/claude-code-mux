@@ -83,11 +83,13 @@ impl ProviderRegistry {
                     ))
                 }
 
-                // OpenRouter (Anthropic-compatible)
-                "openrouter" => Box::new(AnthropicCompatibleProvider::with_headers(
+                // OpenRouter (OpenAI-compatible)
+                // Note: OpenRouter's Anthropic-compatible endpoint only supports Claude models,
+                // so we use the OpenAI endpoint to support all models (Kimi, DeepSeek, etc.)
+                "openrouter" => Box::new(OpenAIProvider::with_headers(
                     config.name.clone(),
                     api_key,
-                    config.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api".to_string()),
+                    config.base_url.clone().unwrap_or_else(|| "https://openrouter.ai/api/v1".to_string()),
                     config.models.clone(),
                     vec![
                         ("HTTP-Referer".to_string(), REPO_URL.to_string()),
