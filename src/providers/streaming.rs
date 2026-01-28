@@ -290,10 +290,16 @@ where
                 } else {
                     String::new()
                 };
-                // Strip common prefixes from model name for cleaner logs
-                let model_display = this.model_name
-                    .strip_prefix("accounts/fireworks/models/")
-                    .unwrap_or(this.model_name);
+                // Keep last 2 slash-separated segments for cleaner logs (e.g. "accounts/fireworks/models/x" -> "models/x")
+                let model_display: std::borrow::Cow<str> = {
+                    let slash_count = this.model_name.matches('/').count();
+                    if slash_count >= 2 {
+                        let parts: Vec<&str> = this.model_name.rsplitn(3, '/').collect();
+                        format!("{}/{}", parts[1], parts[0]).into()
+                    } else {
+                        this.model_name.as_str().into()
+                    }
+                };
                 tracing::info!(
                     "📊 {}:{} {}ms ttft:{}ms {:.1}t/s out:{} in:{}{}",
                     this.provider_name,

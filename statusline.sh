@@ -31,8 +31,8 @@ if [ "$RECENT" = "[]" ] || [ -z "$RECENT" ]; then
     exit 0
 fi
 
-# Strip date suffixes and provider prefixes, get models in recency order (most recent first)
-STRIPPED=$(echo "$RECENT" | jq -r '.[]' | sed -e 's/-[0-9]\{8\}@/@/' -e 's|accounts/fireworks/models/||')
+# Strip date suffixes and long model paths (keep last 2 segments), get models in recency order
+STRIPPED=$(echo "$RECENT" | jq -r '.[]' | sed -e 's/-[0-9]\{8\}@/@/' -e 's|.*/\([^/]*/[^@]*\)@|\1@|')
 UNIQUE_MODELS=$(echo "$STRIPPED" | awk 'seen[$0]==0 {print; seen[$0]=1; count++} count>=3 {exit}')
 
 # Build output: models in recency order, fixed-width bars show proportion
