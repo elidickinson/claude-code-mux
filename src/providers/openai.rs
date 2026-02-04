@@ -277,6 +277,8 @@ struct StreamTransformState {
     message_started: bool,
     /// Is a text content block currently open?
     text_block_open: bool,
+    /// The block index assigned to the text block (if opened)
+    text_block_index: u32,
     /// Tool call indices that have had content_block_start emitted
     /// Maps OpenAI tool_call index → Anthropic content_block index
     tool_blocks: std::collections::HashMap<u32, u32>,
@@ -929,8 +931,14 @@ impl OpenAIProvider {
         // Process delta content
         for choice in &chunk.choices {
             // Handle text content (content or reasoning fields)
-            let text_content = choice.delta.content.as_ref()
-                .or(choice.delta.reasoning.as_ref()); // Support reasoning field for GLM/Cerebras
+            // Prefer non-empty content; fall back to reasoning for models like
+            // GLM/Cerebras that use `reasoning` and kimi that sends empty content
+            // alongside non-empty reasoning
+            let text_content = match (choice.delta.content.as_ref(), choice.delta.reasoning.as_ref()) {
+                (Some(c), _) if !c.is_empty() => Some(c),
+                (_, Some(r)) => Some(r),
+                (c, _) => c,
+            };
 
             if let Some(text) = text_content {
                 // Don't use continue for empty text - finish_reason processing
@@ -940,10 +948,11 @@ impl OpenAIProvider {
                 // Emit content_block_start if this is the first text content
                 if !state.text_block_open {
                     state.text_block_open = true;
-                    state.next_block_index = 1; // Text block is always index 0
+                    state.text_block_index = state.next_block_index;
+                    state.next_block_index += 1;
                     let block_start = serde_json::json!({
                         "type": "content_block_start",
-                        "index": 0,
+                        "index": state.text_block_index,
                         "content_block": {
                             "type": "text",
                             "text": ""
@@ -955,7 +964,7 @@ impl OpenAIProvider {
                 // Emit content_block_delta
                 let delta = serde_json::json!({
                     "type": "content_block_delta",
-                    "index": 0,
+                    "index": state.text_block_index,
                     "delta": {
                         "type": "text_delta",
                         "text": text
@@ -980,7 +989,7 @@ impl OpenAIProvider {
                 if state.text_block_open {
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
-                        "index": 0
+                        "index": state.text_block_index
                     });
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
                     state.text_block_open = false;
@@ -1074,7 +1083,7 @@ impl OpenAIProvider {
                 if state.text_block_open {
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
-                        "index": 0
+                        "index": state.text_block_index
                     });
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
                 }
@@ -1557,7 +1566,7 @@ impl AnthropicProvider for OpenAIProvider {
                 if state.text_block_open {
                     let block_stop = serde_json::json!({
                         "type": "content_block_stop",
-                        "index": 0
+                        "index": state.text_block_index
                     });
                     output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
                 }
@@ -1650,5 +1659,104 @@ mod tests {
         assert_eq!(error.status_code, None);
         assert_eq!(error.error.message, "Rate limit exceeded");
         assert_eq!(error.error.r#type, Some("rate_limit_error".to_string()));
+    }
+
+    /// Helper: parse a JSON string as an OpenAIStreamChunk and transform it
+    fn transform_chunk(json: &str, msg_id: &str, state: &mut StreamTransformState) -> String {
+        let chunk: OpenAIStreamChunk = serde_json::from_str(json).unwrap();
+        OpenAIProvider::transform_openai_chunk_to_anthropic_sse(&chunk, msg_id, state)
+    }
+
+    /// Regression test: kimi-k2.5 sends tool_calls before text, then a trailing
+    /// content " " after the tool call. The text block must not overwrite the
+    /// tool_use block (they need distinct indices).
+    #[test]
+    fn test_tool_call_before_text_gets_distinct_indices() {
+        let mut state = StreamTransformState::default();
+        let id = "msg_test";
+
+        // 1. First chunk: tool_call with name (kimi's first tool chunk)
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"kimi","choices":[{"index":0,"delta":{
+                "role":"assistant","content":null,
+                "tool_calls":[{"index":0,"id":"functions.Bash:0","type":"function",
+                    "function":{"name":"Bash","arguments":null}}]
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        assert!(out.contains("tool_use"), "should emit content_block_start for tool");
+        assert!(out.contains(r#""name":"Bash"#), "tool name should be Bash");
+
+        // 2. Argument chunks
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"kimi","choices":[{"index":0,"delta":{
+                "content":null,
+                "tool_calls":[{"index":0,"id":"functions.Bash:0","type":"function",
+                    "function":{"name":null,"arguments":"{\"command\":\"git log\"}"}}]
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        assert!(out.contains("input_json_delta"), "should emit argument delta");
+
+        // 3. Trailing content " " (kimi quirk: sent after tool_calls)
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"kimi","choices":[{"index":0,"delta":{
+                "content":" ","reasoning":null
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        // Text block should get index 1, not 0 (which is the tool block)
+        assert!(out.contains(r#""index":1"#), "text block should be at index 1, not 0");
+        assert!(!out.contains(r#""index":0"#), "must not emit anything at index 0 (tool block)");
+
+        // 4. finish_reason: tool_calls
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"kimi","choices":[{"index":0,"delta":{
+                "content":""
+            },"finish_reason":"tool_calls"}]
+        }"#, id, &mut state);
+        assert!(out.contains("tool_use"), "stop_reason should be tool_use");
+        assert!(out.contains("message_stop"), "should end the stream");
+    }
+
+    /// When text comes first (normal case), text gets index 0 and tool gets index 1.
+    #[test]
+    fn test_text_before_tool_call_normal_ordering() {
+        let mut state = StreamTransformState::default();
+        let id = "msg_test";
+
+        // 1. Text content first
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"test","choices":[{"index":0,"delta":{
+                "content":"Let me check"
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        assert!(out.contains(r#""index":0"#), "text block at index 0");
+        assert!(out.contains("text_delta"));
+
+        // 2. Tool call arrives (should close text, open tool at index 1)
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"test","choices":[{"index":0,"delta":{
+                "content":null,
+                "tool_calls":[{"index":0,"id":"call_123","type":"function",
+                    "function":{"name":"Bash","arguments":"{}"}}]
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        // Should close text block at index 0
+        assert!(out.contains("content_block_stop"));
+        // Should open tool block at index 1
+        assert!(out.contains(r#""index":1"#));
+        assert!(out.contains("tool_use"));
+    }
+
+    /// Reasoning should be used when content is empty (kimi sends both fields).
+    #[test]
+    fn test_empty_content_falls_back_to_reasoning() {
+        let mut state = StreamTransformState::default();
+        let id = "msg_test";
+
+        let out = transform_chunk(r#"{
+            "id":"gen-1","model":"kimi","choices":[{"index":0,"delta":{
+                "content":"","reasoning":"thinking about it"
+            },"finish_reason":null}]
+        }"#, id, &mut state);
+        assert!(out.contains("thinking about it"), "should use reasoning when content is empty");
     }
 }
