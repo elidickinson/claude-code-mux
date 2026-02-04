@@ -1486,7 +1486,7 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                                     <label
                                         class="block text-sm font-semibold text-gray-700 mb-3"
                                     >
-                                        Select Provider (순위 무시)
+                                        Select Provider (override routing)
                                     </label>
                                     <select
                                         id="test-provider-select"
@@ -1497,8 +1497,8 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                                         </option>
                                     </select>
                                     <p class="text-xs text-gray-500 mt-2">
-                                        선택하면 라우팅 순위를 무시하고 해당
-                                        provider로 직접 요청합니다
+                                        Bypasses routing priority and sends
+                                        requests directly to this provider
                                     </p>
                                 </div>
                             </div>
@@ -3319,7 +3319,7 @@ strip_match = false             # strip matched phrase (default: false)</pre>
 
             function updateLastSaved() {
                 const now = new Date();
-                const timeStr = now.toLocaleTimeString("ko-KR", {
+                const timeStr = now.toLocaleTimeString(undefined, {
                     hour: "2-digit",
                     minute: "2-digit",
                     second: "2-digit",
