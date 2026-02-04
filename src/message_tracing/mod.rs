@@ -29,6 +29,7 @@ struct RequestTrace {
     provider: String,
     route_type: String,
     is_stream: bool,
+    tool_count: usize,
     messages: serde_json::Value,
 }
 
@@ -39,6 +40,7 @@ struct ResponseTrace {
     dir: &'static str,
     id: String,
     latency_ms: u64,
+    stop_reason: String,
     input_tokens: u32,
     output_tokens: u32,
     content: serde_json::Value,
@@ -127,6 +129,7 @@ impl MessageTracer {
             provider: provider.to_string(),
             route_type: route_type.to_string(),
             is_stream,
+            tool_count: request.tools.as_ref().map_or(0, |t| t.len()),
             messages,
         };
 
@@ -149,6 +152,7 @@ impl MessageTracer {
             dir: "res",
             id: id.to_string(),
             latency_ms,
+            stop_reason: response.stop_reason.clone().unwrap_or_default(),
             input_tokens: response.usage.input_tokens,
             output_tokens: response.usage.output_tokens,
             content: serde_json::to_value(&response.content).unwrap_or_default(),
