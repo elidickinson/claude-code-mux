@@ -191,13 +191,15 @@ ccm --version
 
 ### Option 2: Install via Cargo
 
-If you have Rust installed, you can install directly from crates.io:
-
 ```bash
-cargo install claude-code-mux
+# Install Rust (if you don't have it)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install ccm from GitHub
+cargo install --git https://github.com/elidickinson/claude-code-mux.git
 ```
 
-This will download, compile, and install the `ccm` binary to your cargo bin directory (usually `~/.cargo/bin/`).
+This will download, compile, and install the `ccm` binary to `~/.cargo/bin/`.
 
 #### Verify Installation
 ```bash

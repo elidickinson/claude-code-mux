@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use tracing_subscriber::EnvFilter;
 
 mod auth;
 mod cli;
@@ -47,9 +48,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-
     let cli = Cli::parse();
 
     // Get config path (use default if not specified)
@@ -61,6 +59,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Load configuration
     let config = cli::AppConfig::from_file(&config_path)?;
+
+    // Initialize tracing: RUST_LOG env var takes precedence, otherwise use config log_level
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&config.server.log_level));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match cli.command {
         Commands::Start { port } => {
