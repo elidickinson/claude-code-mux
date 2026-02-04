@@ -339,6 +339,7 @@ mod tests {
                 oauth_provider: None,
                 project_id: None,
                 location: None,
+                headers: None,
             },
             ProviderConfig {
                 name: "provider-b".to_string(),
@@ -351,6 +352,7 @@ mod tests {
                 oauth_provider: None,
                 project_id: None,
                 location: None,
+                headers: None,
             },
         ];
 
