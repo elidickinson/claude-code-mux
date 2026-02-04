@@ -914,7 +914,7 @@
                                                     </button>
                                                 </div>
 
-                                                <!-- Step 2: Waiting for code -->
+                                                <!-- Step 2: Auth URL + code input -->
                                                 <div
                                                     id="oauth-step-2"
                                                     class="hidden"
@@ -922,35 +922,20 @@
                                                     <div
                                                         class="bg-blue-50 border-2 border-blue-200 rounded-lg p-4 mb-4"
                                                     >
-                                                        <p
-                                                            class="text-sm text-blue-900 mb-2 font-semibold"
-                                                        >
-                                                            ✓ Authorization
-                                                            window opened
+                                                        <p class="text-sm text-blue-900 mb-2 font-semibold">
+                                                            Authorize in the opened tab, then paste the code below.
                                                         </p>
-                                                        <ol
-                                                            id="oauth-step2-instructions"
-                                                            class="text-sm text-blue-800 space-y-1 ml-4 list-decimal"
-                                                        >
-                                                            <li>
-                                                                Log in to your
-                                                                Claude Pro/Max
-                                                                account
-                                                            </li>
-                                                            <li>
-                                                                Click "Allow" to
-                                                                authorize
-                                                            </li>
-                                                            <li>
-                                                                Copy the
-                                                                authorization
-                                                                code
-                                                            </li>
-                                                            <li>
-                                                                Paste it in the
-                                                                field below
-                                                            </li>
-                                                        </ol>
+                                                        <div class="flex items-center gap-2 mt-2">
+                                                            <a id="oauth-auth-link" href="#" target="_blank" rel="noopener"
+                                                                class="text-xs text-blue-600 underline break-all flex-1 font-mono" style="word-break: break-all;">
+                                                            </a>
+                                                            <button type="button" onclick="copyOAuthUrl()" class="btn-secondary text-xs px-2 py-1 whitespace-nowrap">
+                                                                Copy URL
+                                                            </button>
+                                                        </div>
+                                                        <p class="text-xs text-gray-500 mt-1">
+                                                            Didn't open? Click the link or copy it to another browser.
+                                                        </p>
                                                     </div>
                                                     <label class="label"
                                                         >Authorization
@@ -4037,39 +4022,12 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     sessionStorage.setItem("oauth_verifier", verifier);
                     sessionStorage.setItem("oauth_type", oauth_type);
 
-                    // Step 2: Open authorization URL in new window
-                    window.open(
-                        url,
-                        "OAuth Authorization",
-                        "width=600,height=800",
-                    );
+                    // Step 2: Open authorization URL in new tab and show it
+                    window.open(url, "_blank");
 
-                    // Update step 2 instructions based on API format
-                    const step2InstructionsEl = document.getElementById(
-                        "oauth-step2-instructions",
-                    );
-                    if (apiFormat === "gemini") {
-                        step2InstructionsEl.innerHTML = `
-                            <li>Log in to your Google account</li>
-                            <li>Click "Allow" to authorize</li>
-                            <li>Copy the authorization code</li>
-                            <li>Paste it in the field below</li>
-                        `;
-                    } else if (apiFormat === "openai") {
-                        step2InstructionsEl.innerHTML = `
-                            <li>Log in to your ChatGPT Plus/Pro account</li>
-                            <li>Click "Allow" to authorize</li>
-                            <li>Copy the authorization code</li>
-                            <li>Paste it in the field below</li>
-                        `;
-                    } else {
-                        step2InstructionsEl.innerHTML = `
-                            <li>Log in to your Claude Pro/Max account</li>
-                            <li>Click "Allow" to authorize</li>
-                            <li>Copy the authorization code</li>
-                            <li>Paste it in the field below</li>
-                        `;
-                    }
+                    const authLink = document.getElementById("oauth-auth-link");
+                    authLink.href = url;
+                    authLink.textContent = url;
 
                     // Step 3: Show code input UI
                     document
@@ -4079,9 +4037,6 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         .getElementById("oauth-step-2")
                         .classList.remove("hidden");
 
-                    notifySuccess(
-                        "Authorization window opened. Please complete authentication and paste the code.",
-                    );
                 } catch (error) {
                     console.error("OAuth flow error:", error);
                     notifyError(`Failed to start OAuth: ${error.message}`);
@@ -4163,6 +4118,11 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     console.error("OAuth completion error:", error);
                     notifyError(`Authentication failed: ${error.message}`);
                 }
+            }
+
+            function copyOAuthUrl() {
+                const url = document.getElementById("oauth-auth-link").href;
+                navigator.clipboard.writeText(url).then(() => notifySuccess("URL copied to clipboard"));
             }
 
             function cancelOAuthFlow() {
