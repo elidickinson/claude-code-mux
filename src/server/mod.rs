@@ -141,10 +141,6 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
         .route("/v1/messages/count_tokens", post(handle_count_tokens))
         .route("/v1/chat/completions", post(handle_openai_chat_completions))
         .route("/health", get(health_check))
-        .route("/api/models", get(get_models))
-        .route("/api/providers", get(get_providers))
-        .route("/api/models-config", get(get_models_config))
-        .route("/api/config", get(get_config))
         .route("/api/config/json", get(get_config_json))
         .route("/api/config/json", post(update_config_json))
         .route("/api/reload", post(reload_config))
@@ -207,41 +203,6 @@ async fn health_check() -> impl IntoResponse {
         "status": "ok",
         "service": "claude-code-mux"
     }))
-}
-
-/// REMOVED: This endpoint was for LiteLLM integration which has been removed.
-/// Models are now managed through the provider registry and config.
-async fn get_models(State(_state): State<Arc<AppState>>) -> Result<Json<serde_json::Value>, AppError> {
-    Err(AppError::ParseError("This endpoint has been removed. Use /api/models-config instead.".to_string()))
-}
-
-/// Get current routing configuration
-async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let inner = state.snapshot();
-    Json(serde_json::json!({
-        "server": {
-            "host": inner.config.server.host,
-            "port": inner.config.server.port,
-        },
-        "router": {
-            "default": inner.config.router.default,
-            "background": inner.config.router.background,
-            "think": inner.config.router.think,
-            "websearch": inner.config.router.websearch,
-        }
-    }))
-}
-
-/// Get providers configuration
-async fn get_providers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let inner = state.snapshot();
-    Json(inner.config.providers.clone())
-}
-
-/// Get models configuration
-async fn get_models_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let inner = state.snapshot();
-    Json(inner.config.models.clone())
 }
 
 /// Get full configuration as JSON (for admin UI)
