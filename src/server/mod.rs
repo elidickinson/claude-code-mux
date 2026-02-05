@@ -15,7 +15,7 @@ use axum::{
         Html, IntoResponse, Response,
     },
     routing::{get, post},
-    Form, Json, Router as AxumRouter,
+    Json, Router as AxumRouter,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -145,7 +145,6 @@ pub async fn start_server(config: AppConfig, config_path: std::path::PathBuf) ->
         .route("/api/providers", get(get_providers))
         .route("/api/models-config", get(get_models_config))
         .route("/api/config", get(get_config))
-        .route("/api/config", post(update_config))
         .route("/api/config/json", get(get_config_json))
         .route("/api/config/json", post(update_config_json))
         .route("/api/reload", post(reload_config))
@@ -231,57 +230,6 @@ async fn get_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "websearch": inner.config.router.websearch,
         }
     }))
-}
-
-/// Update configuration
-#[derive(serde::Deserialize)]
-struct ConfigUpdate {
-    // Router models
-    default_model: String,
-    background_model: Option<String>,
-    think_model: Option<String>,
-    websearch_model: Option<String>,
-}
-
-async fn update_config(
-    State(state): State<Arc<AppState>>,
-    Form(update): Form<ConfigUpdate>,
-) -> Result<Html<String>, AppError> {
-    // Read current config
-    let config_path = &state.config_path;
-    let config_str = std::fs::read_to_string(config_path)
-        .map_err(|e| AppError::ParseError(format!("Failed to read config: {}", e)))?;
-
-    let mut config: toml::Value = toml::from_str(&config_str)
-        .map_err(|e| AppError::ParseError(format!("Failed to parse config: {}", e)))?;
-
-    // Update router section
-    if let Some(router) = config.get_mut("router").and_then(|v| v.as_table_mut()) {
-        router.insert("default".to_string(), toml::Value::String(update.default_model));
-
-        if let Some(bg) = update.background_model {
-            router.insert("background".to_string(), toml::Value::String(bg));
-        }
-
-        if let Some(think) = update.think_model {
-            router.insert("think".to_string(), toml::Value::String(think));
-        }
-
-        if let Some(ws) = update.websearch_model {
-            router.insert("websearch".to_string(), toml::Value::String(ws));
-        }
-    }
-
-    // Write back to file
-    let new_config_str = toml::to_string_pretty(&config)
-        .map_err(|e| AppError::ParseError(format!("Failed to serialize config: {}", e)))?;
-
-    std::fs::write(config_path, new_config_str)
-        .map_err(|e| AppError::ParseError(format!("Failed to write config: {}", e)))?;
-
-    info!("✅ Configuration updated successfully");
-
-    Ok(Html("<div class='px-4 py-3 rounded-xl bg-primary/20 border border-primary/50 text-foreground text-sm'>✅ Configuration saved successfully! Please restart the server to apply changes.</div>".to_string()))
 }
 
 /// Get providers configuration
