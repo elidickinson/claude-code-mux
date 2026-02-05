@@ -1,11 +1,9 @@
 # Claude Code Mux
 
-[![CI](https://github.com/9j/claude-code-mux/workflows/CI/badge.svg)](https://github.com/9j/claude-code-mux/actions)
-[![Latest Release](https://img.shields.io/github/v/release/9j/claude-code-mux)](https://github.com/9j/claude-code-mux/releases/latest)
+[![Build](https://github.com/elidickinson/claude-code-mux/workflows/Build/badge.svg)](https://github.com/elidickinson/claude-code-mux/actions)
+[![Latest Release](https://img.shields.io/github/v/release/elidickinson/claude-code-mux)](https://github.com/elidickinson/claude-code-mux/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
-[![GitHub Stars](https://img.shields.io/github/stars/9j/claude-code-mux?style=social)](https://github.com/9j/claude-code-mux)
-[![GitHub Forks](https://img.shields.io/github/forks/9j/claude-code-mux?style=social)](https://github.com/9j/claude-code-mux/fork)
 
 OpenRouter met Claude Code Router. They had a baby.
 
@@ -147,15 +145,15 @@ This fork adds several significant improvements over the upstream project:
 
 ### Option 1: Download Pre-built Binaries (Recommended)
 
-Download the latest release for your platform from [GitHub Releases](https://github.com/9j/claude-code-mux/releases/latest).
+Download the latest release for your platform from [GitHub Releases](https://github.com/elidickinson/claude-code-mux/releases/latest), or get development builds from [Actions](https://github.com/elidickinson/claude-code-mux/actions/workflows/build.yml).
 
 #### Linux (x86_64)
 ```bash
 # Download and extract (glibc)
-curl -L https://github.com/9j/claude-code-mux/releases/latest/download/ccm-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/elidickinson/claude-code-mux/releases/latest/download/ccm-linux-x86_64.tar.gz | tar xz
 
 # Or download musl version (static linking, more portable)
-curl -L https://github.com/9j/claude-code-mux/releases/latest/download/ccm-linux-x86_64-musl.tar.gz | tar xz
+curl -L https://github.com/elidickinson/claude-code-mux/releases/latest/download/ccm-linux-x86_64-musl.tar.gz | tar xz
 
 # Move to PATH
 sudo mv ccm /usr/local/bin/
@@ -164,7 +162,7 @@ sudo mv ccm /usr/local/bin/
 #### macOS (Intel)
 ```bash
 # Download and extract
-curl -L https://github.com/9j/claude-code-mux/releases/latest/download/ccm-macos-x86_64.tar.gz | tar xz
+curl -L https://github.com/elidickinson/claude-code-mux/releases/latest/download/ccm-macos-x86_64.tar.gz | tar xz
 
 # Move to PATH
 sudo mv ccm /usr/local/bin/
@@ -173,14 +171,14 @@ sudo mv ccm /usr/local/bin/
 #### macOS (Apple Silicon)
 ```bash
 # Download and extract
-curl -L https://github.com/9j/claude-code-mux/releases/latest/download/ccm-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/elidickinson/claude-code-mux/releases/latest/download/ccm-macos-aarch64.tar.gz | tar xz
 
 # Move to PATH
 sudo mv ccm /usr/local/bin/
 ```
 
 #### Windows
-1. Download [ccm-windows-x86_64.zip](https://github.com/9j/claude-code-mux/releases/latest/download/ccm-windows-x86_64.zip)
+1. Download [ccm-windows-x86_64.zip](https://github.com/elidickinson/claude-code-mux/releases/latest/download/ccm-windows-x86_64.zip)
 2. Extract the ZIP file
 3. Add the directory containing `ccm.exe` to your PATH
 
@@ -215,7 +213,7 @@ ccm --version
 
 ```bash
 # Clone the repository
-git clone https://github.com/9j/claude-code-mux
+git clone https://github.com/elidickinson/claude-code-mux
 cd claude-code-mux
 
 # Build the release binary
@@ -1127,8 +1125,8 @@ Enable debug logging with `RUST_LOG=debug ccm start` to see routing decisions.
 <details>
 <summary><b>How do I report bugs or request features?</b></summary>
 
-- **Bug reports**: [Open a GitHub issue](https://github.com/9j/claude-code-mux/issues/new)
-- **Feature requests**: [Start a discussion](https://github.com/9j/claude-code-mux/discussions)
+- **Bug reports**: [Open a GitHub issue](https://github.com/elidickinson/claude-code-mux/issues/new)
+- **Feature requests**: [Start a discussion](https://github.com/elidickinson/claude-code-mux/discussions)
 - **Security issues**: Email the maintainer (see GitHub profile)
 </details>
 
@@ -1190,21 +1188,21 @@ If `zai` fails → automatically falls back to `openrouter`. **No manual interve
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for detailed release history or view [GitHub Releases](https://github.com/9j/claude-code-mux/releases) for downloads.
+See [CHANGELOG.md](CHANGELOG.md) for detailed release history or view [GitHub Releases](https://github.com/elidickinson/claude-code-mux/releases) for downloads.
 
 ## Contributing
 
 We love contributions! Here's how you can help:
 
 ### 🐛 Report Bugs
-Found a bug? [Open an issue](https://github.com/9j/claude-code-mux/issues/new) with:
+Found a bug? [Open an issue](https://github.com/elidickinson/claude-code-mux/issues/new) with:
 - Clear description of the problem
 - Steps to reproduce
 - Expected vs actual behavior
 - Your environment (OS, Rust version)
 
 ### 💡 Suggest Features
-Have an idea? [Start a discussion](https://github.com/9j/claude-code-mux/discussions) or open an issue with:
+Have an idea? [Start a discussion](https://github.com/elidickinson/claude-code-mux/discussions) or open an issue with:
 - Use case description
 - Proposed solution
 - Alternative approaches considered
