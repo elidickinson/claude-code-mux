@@ -3646,7 +3646,6 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                 const oauthLabel = document.getElementById("oauth-label-title");
                 const oauthDescription = document.getElementById("oauth-label-description");
                 const step1Instruction = document.getElementById("oauth-step1-instruction");
-                const step2Instructions = document.getElementById("oauth-step2-instructions");
                 const apiKeySection = document.getElementById("api-key-section");
 
                 // Hide all preset sections first
@@ -3722,32 +3721,14 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     oauthLabel.textContent = "OAuth (ChatGPT Plus/Pro)";
                     oauthDescription.textContent = "Free for ChatGPT Plus/Pro subscribers";
                     step1Instruction.textContent = "Click the button below to authenticate with your ChatGPT Plus/Pro account.";
-                    step2Instructions.innerHTML = `
-                        <li>Log in to your ChatGPT Plus/Pro account</li>
-                        <li>Click "Allow" to authorize</li>
-                        <li>Copy the authorization code</li>
-                        <li>Paste it in the field below</li>
-                    `;
                 } else if (apiFormat === "gemini") {
                     oauthLabel.textContent = "OAuth (Google AI Pro/Ultra)";
                     oauthDescription.textContent = "Free for Google AI Pro/Ultra subscribers";
                     step1Instruction.textContent = "Click the button below to authenticate with your Google account (AI Pro/Ultra).";
-                    step2Instructions.innerHTML = `
-                        <li>Log in to your Google account</li>
-                        <li>Click "Allow" to authorize</li>
-                        <li>Copy the authorization code</li>
-                        <li>Paste it in the field below</li>
-                    `;
                 } else if (apiFormat === "anthropic") {
                     oauthLabel.textContent = "OAuth (Claude Pro/Max)";
                     oauthDescription.textContent = "Free for Claude Max subscribers";
                     step1Instruction.textContent = "Click the button below to authenticate with your Claude Pro/Max account.";
-                    step2Instructions.innerHTML = `
-                        <li>Log in to your Claude Pro/Max account</li>
-                        <li>Click "Allow" to authorize</li>
-                        <li>Copy the authorization code</li>
-                        <li>Paste it in the field below</li>
-                    `;
                 }
             }
 
