@@ -275,6 +275,10 @@ struct OpenAIErrorDetail {
 struct StreamTransformState {
     /// Has message_start been emitted?
     message_started: bool,
+    /// Is a thinking content block currently open?
+    thinking_block_open: bool,
+    /// The block index assigned to the thinking block (if opened)
+    thinking_block_index: u32,
     /// Is a text content block currently open?
     text_block_open: bool,
     /// The block index assigned to the text block (if opened)
@@ -337,10 +341,9 @@ impl OpenAIProvider {
                                                     if let Some(text) = first_content.get("text").and_then(|v| v.as_str()) {
                                                         match output_type {
                                                             "reasoning" => {
-                                                                // Convert OpenAI reasoning to Claude thinking block
+                                                                // Unsigned thinking block (no signature field)
                                                                 content_blocks.push(ContentBlock::thinking(serde_json::json!({
-                                                                    "thinking": text,
-                                                                    "signature": "" // OpenAI doesn't have signature
+                                                                    "thinking": text
                                                                 })));
                                                             }
                                                             "message" => {
@@ -754,20 +757,30 @@ impl OpenAIProvider {
     /// Transform OpenAI Chat Completions response to Anthropic Messages format.
     ///
     /// # Response Structure Mapping
-    /// - OpenAI: `{ id, model, choices: [{ message: { content, tool_calls }, finish_reason }], usage }`
+    /// - OpenAI: `{ id, model, choices: [{ message: { content, reasoning, tool_calls }, finish_reason }], usage }`
     /// - Anthropic: `{ id, model, content: [...blocks], stop_reason, usage }`
     ///
-    /// # Content Extraction Priority
-    /// 1. `message.content` (string or parts array)
-    /// 2. `message.reasoning` (for GLM/Cerebras models with chain-of-thought)
-    /// 3. `message.tool_calls` → converted to `tool_use` content blocks
+    /// # Content Block Mapping
+    /// - `message.reasoning` → `thinking` content block (chain-of-thought)
+    /// - `message.content` → `text` content block
+    /// - `message.tool_calls` → `tool_use` content blocks
     fn transform_response(&self, response: OpenAIResponse) -> ProviderResponse {
         let choice = response.choices.into_iter().next()
             .expect("OpenAI response must have at least one choice");
 
         let mut content_blocks = Vec::new();
 
-        // Extract text from content or reasoning (for GLM models via Cerebras)
+        // Add reasoning as thinking block if present.
+        // Note: omit `signature` field - Anthropic accepts unsigned blocks but rejects empty signatures.
+        if let Some(reasoning) = choice.message.reasoning {
+            if !reasoning.is_empty() {
+                content_blocks.push(ContentBlock::thinking(serde_json::json!({
+                    "thinking": reasoning
+                })));
+            }
+        }
+
+        // Extract text content
         let text = if let Some(content) = choice.message.content {
             match content {
                 OpenAIContent::String(s) => s,
@@ -785,8 +798,6 @@ impl OpenAIProvider {
                         .join("\n")
                 }
             }
-        } else if let Some(reasoning) = choice.message.reasoning {
-            reasoning
         } else {
             String::new()
         };
@@ -885,7 +896,8 @@ impl OpenAIProvider {
     ///
     /// # Event Mapping (OpenAI → Anthropic)
     /// - First chunk → `message_start` (initializes the message envelope)
-    /// - `delta.content` / `delta.reasoning` → `content_block_start` + `content_block_delta`
+    /// - `delta.reasoning` → `thinking` content block (separate from text)
+    /// - `delta.content` → `text` content block
     /// - `delta.tool_calls` → `content_block_start` (tool_use) + `input_json_delta` (incremental)
     /// - `finish_reason` → `content_block_stop` (for all open blocks) + `message_delta` + `message_stop`
     ///
@@ -901,7 +913,7 @@ impl OpenAIProvider {
     /// - On finish_reason: emit `content_block_stop` for all open tool blocks
     ///
     /// # Provider Quirks
-    /// - GLM/Cerebras models use `reasoning` field instead of `content` for chain-of-thought
+    /// - Some models send `reasoning` field for chain-of-thought (emitted as thinking block)
     /// - Cerebras may close the stream without sending `finish_reason` (handled by caller)
     fn transform_openai_chunk_to_anthropic_sse(chunk: &OpenAIStreamChunk, message_id: &str, state: &mut StreamTransformState) -> String {
         let mut output = String::new();
@@ -930,47 +942,77 @@ impl OpenAIProvider {
 
         // Process delta content
         for choice in &chunk.choices {
-            // Handle text content (content or reasoning fields)
-            // Prefer non-empty content; fall back to reasoning for models like
-            // GLM/Cerebras that use `reasoning` and kimi that sends empty content
-            // alongside non-empty reasoning
-            let text_content = match (choice.delta.content.as_ref(), choice.delta.reasoning.as_ref()) {
-                (Some(c), _) if !c.is_empty() => Some(c),
-                (_, Some(r)) => Some(r),
-                (c, _) => c,
-            };
+            // Handle reasoning content as thinking blocks (separate from text content)
+            if let Some(reasoning) = choice.delta.reasoning.as_ref() {
+                if !reasoning.is_empty() {
+                    // Emit thinking block start if not already open
+                    if !state.thinking_block_open {
+                        state.thinking_block_open = true;
+                        state.thinking_block_index = state.next_block_index;
+                        state.next_block_index += 1;
+                        let block_start = serde_json::json!({
+                            "type": "content_block_start",
+                            "index": state.thinking_block_index,
+                            "content_block": {
+                                "type": "thinking",
+                                "thinking": ""
+                            }
+                        });
+                        output.push_str(&format!("event: content_block_start\ndata: {}\n\n", block_start));
+                    }
 
-            if let Some(text) = text_content {
-                // Don't use continue for empty text - finish_reason processing
-                // is required even when content is empty to ensure proper stream termination.
-                if !text.is_empty() {
-
-                // Emit content_block_start if this is the first text content
-                if !state.text_block_open {
-                    state.text_block_open = true;
-                    state.text_block_index = state.next_block_index;
-                    state.next_block_index += 1;
-                    let block_start = serde_json::json!({
-                        "type": "content_block_start",
-                        "index": state.text_block_index,
-                        "content_block": {
-                            "type": "text",
-                            "text": ""
+                    // Emit thinking delta
+                    let delta = serde_json::json!({
+                        "type": "content_block_delta",
+                        "index": state.thinking_block_index,
+                        "delta": {
+                            "type": "thinking_delta",
+                            "thinking": reasoning
                         }
                     });
-                    output.push_str(&format!("event: content_block_start\ndata: {}\n\n", block_start));
+                    output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
                 }
+            }
 
-                // Emit content_block_delta
-                let delta = serde_json::json!({
-                    "type": "content_block_delta",
-                    "index": state.text_block_index,
-                    "delta": {
-                        "type": "text_delta",
-                        "text": text
+            // Handle text content
+            if let Some(text) = choice.delta.content.as_ref() {
+                if !text.is_empty() {
+                    // Close thinking block if open (text comes after reasoning)
+                    if state.thinking_block_open {
+                        let block_stop = serde_json::json!({
+                            "type": "content_block_stop",
+                            "index": state.thinking_block_index
+                        });
+                        output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                        state.thinking_block_open = false;
                     }
-                });
-                output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
+
+                    // Emit content_block_start if this is the first text content
+                    if !state.text_block_open {
+                        state.text_block_open = true;
+                        state.text_block_index = state.next_block_index;
+                        state.next_block_index += 1;
+                        let block_start = serde_json::json!({
+                            "type": "content_block_start",
+                            "index": state.text_block_index,
+                            "content_block": {
+                                "type": "text",
+                                "text": ""
+                            }
+                        });
+                        output.push_str(&format!("event: content_block_start\ndata: {}\n\n", block_start));
+                    }
+
+                    // Emit content_block_delta
+                    let delta = serde_json::json!({
+                        "type": "content_block_delta",
+                        "index": state.text_block_index,
+                        "delta": {
+                            "type": "text_delta",
+                            "text": text
+                        }
+                    });
+                    output.push_str(&format!("event: content_block_delta\ndata: {}\n\n", delta));
                 }
             }
 
@@ -985,6 +1027,16 @@ impl OpenAIProvider {
             //   content_block_delta: { type: "input_json_delta", partial_json: "..." }
             //   content_block_stop: (only at finish_reason)
             if let Some(ref tool_calls) = choice.delta.tool_calls {
+                // Close thinking block if open (tool calls come after content)
+                if state.thinking_block_open {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": state.thinking_block_index
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                    state.thinking_block_open = false;
+                }
+
                 // Close text block if open (tool calls come after text)
                 if state.text_block_open {
                     let block_stop = serde_json::json!({
@@ -1072,12 +1124,22 @@ impl OpenAIProvider {
             // =============================================
             // When OpenAI sends a chunk with finish_reason, we need to emit the
             // Anthropic stream termination sequence:
-            //   1. content_block_stop (for text block if open)
-            //   2. content_block_stop (for each open tool block)
-            //   3. message_delta (with stop_reason mapped from finish_reason)
-            //   4. message_stop (signals end of message)
+            //   1. content_block_stop (for thinking block if open)
+            //   2. content_block_stop (for text block if open)
+            //   3. content_block_stop (for each open tool block)
+            //   4. message_delta (with stop_reason mapped from finish_reason)
+            //   5. message_stop (signals end of message)
             if let Some(reason) = &choice.finish_reason {
                 state.stream_ended = true;
+
+                // Close thinking block if still open
+                if state.thinking_block_open {
+                    let block_stop = serde_json::json!({
+                        "type": "content_block_stop",
+                        "index": state.thinking_block_index
+                    });
+                    output.push_str(&format!("event: content_block_stop\ndata: {}\n\n", block_stop));
+                }
 
                 // Close text block if still open
                 if state.text_block_open {
@@ -1746,9 +1808,9 @@ mod tests {
         assert!(out.contains("tool_use"));
     }
 
-    /// Reasoning should be used when content is empty (kimi sends both fields).
+    /// Reasoning should be emitted as a thinking block (not merged with text content).
     #[test]
-    fn test_empty_content_falls_back_to_reasoning() {
+    fn test_reasoning_becomes_thinking_block() {
         let mut state = StreamTransformState::default();
         let id = "msg_test";
 
@@ -1757,6 +1819,8 @@ mod tests {
                 "content":"","reasoning":"thinking about it"
             },"finish_reason":null}]
         }"#, id, &mut state);
-        assert!(out.contains("thinking about it"), "should use reasoning when content is empty");
+        assert!(out.contains("thinking about it"), "should include reasoning content");
+        assert!(out.contains("\"type\":\"thinking\""), "should be a thinking content block");
+        assert!(out.contains("thinking_delta"), "should use thinking_delta type");
     }
 }

@@ -36,12 +36,13 @@ fn extract_forward_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Stri
     result
 }
 
-/// Strip thinking blocks with signatures and disable thinking mode.
-/// We cannot verify which provider signed a thinking block, so we strip ALL
-/// signed blocks to avoid signature validation errors when switching providers.
+/// Strip signed thinking blocks and disable thinking mode.
+/// Anthropic validates thinking block signatures, so we must strip blocks
+/// signed by other providers (we can't verify their signatures).
+/// Unsigned blocks (no signature field) are preserved.
 /// Also disables thinking since Anthropic requires thinking blocks in assistant
 /// messages when thinking is enabled.
-fn strip_signed_thinking_blocks(request: &mut AnthropicRequest) {
+fn strip_thinking_blocks(request: &mut AnthropicRequest) {
     let mut stripped_count = 0;
 
     for message in &mut request.messages {
@@ -50,16 +51,14 @@ fn strip_signed_thinking_blocks(request: &mut AnthropicRequest) {
             blocks.retain(|block| {
                 match block {
                     ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
-                        let sig = raw.get("signature").and_then(|v| v.as_str()).unwrap_or("");
-
-                        // Empty signature = unsigned block, keep it
-                        if sig.is_empty() {
-                            return true;
+                        // Keep unsigned blocks (no signature field)
+                        // Strip signed blocks (can't verify other providers' signatures)
+                        if raw.get("signature").is_some() {
+                            tracing::debug!("🧹 Stripping signed thinking block");
+                            false
+                        } else {
+                            true
                         }
-
-                        // Strip all signed thinking blocks - we can't verify signatures
-                        tracing::debug!("🧹 Stripping signed thinking block (sig_len={})", sig.len());
-                        false
                     }
                     _ => true,
                 }
@@ -84,7 +83,7 @@ fn strip_signed_thinking_blocks(request: &mut AnthropicRequest) {
             r#type: "disabled".to_string(),
             budget_tokens: None,
         });
-        tracing::info!("🧹 Stripped {} thinking blocks, disabled thinking mode", stripped_count);
+        tracing::info!("🧹 Stripped {} thinking block(s), disabled thinking mode", stripped_count);
     }
 
     if removed_msgs > 0 {
@@ -409,7 +408,7 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
         if let Err(ProviderError::ApiError { message, .. }) = &result {
             if message.contains("Invalid `signature` in `thinking` block") {
                 tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying");
-                strip_signed_thinking_blocks(&mut request);
+                strip_thinking_blocks(&mut request);
                 return self.try_send_message(&url, &auth_value, &request).await;
             }
         }
@@ -524,7 +523,7 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
             Err(ProviderError::ApiError { status, message }) => {
                 if message.contains("Invalid `signature` in `thinking` block") {
                     tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying stream");
-                    strip_signed_thinking_blocks(&mut request);
+                    strip_thinking_blocks(&mut request);
                     self.try_send_stream_request(&url, &auth_value, &request).await?
                 } else {
                     return Err(ProviderError::ApiError { status, message });
