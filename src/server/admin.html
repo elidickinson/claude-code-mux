@@ -491,6 +491,7 @@
                         </p>
 
                         <form id="add-provider-form" class="space-y-8">
+                            <input type="hidden" name="oauth_provider_id" id="oauth_provider_id" />
                             <!-- Step 1: API Format -->
                             <div class="card">
                                 <h2 class="text-2xl font-bold mb-8">
@@ -2173,6 +2174,24 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     // Update UI again after setting preset
                     updateProviderUI();
 
+                    // Set auth_type radio and update UI visibility
+                    const authType = provider.auth_type || "apikey";
+                    const authRadio = form.querySelector(
+                        `input[name="auth_type"][value="${authType}"]`,
+                    );
+                    if (authRadio) {
+                        authRadio.checked = true;
+                        toggleAuthMethod();
+                    }
+
+                    // Populate hidden field for OAuth providers
+                    if (authType === "oauth" && provider.oauth_provider) {
+                        const hiddenField = document.getElementById("oauth_provider_id");
+                        if (hiddenField) {
+                            hiddenField.value = provider.oauth_provider;
+                        }
+                    }
+
                     // Set provider name
                     form.querySelector('[name="provider_name"]').value = provider.name;
 
@@ -2201,6 +2220,10 @@ strip_match = false             # strip matched phrase (default: false)</pre>
             function showAddProvider() {
                 appState.editingProvider = null;
                 navigate({ tab: "providers", view: "add" });
+
+                // Clear stale OAuth session state (form.reset() clears the hidden field)
+                sessionStorage.removeItem("oauth_verifier");
+                sessionStorage.removeItem("oauth_type");
 
                 // Wait for DOM to update, then reset form UI
                 setTimeout(() => {
@@ -3105,14 +3128,25 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                         return;
                     }
 
-                    // For OAuth, check if token was saved
-                    const oauthProviderId =
-                        sessionStorage.getItem("oauth_provider_id");
-                    if (authType === "oauth" && !oauthProviderId) {
-                        notifyError(
-                            "Please complete OAuth authentication first.",
-                        );
-                        return;
+                    // For OAuth, get oauth_provider from form field (preferred), or fallback to existing provider for edit
+                    const isEditing = appState.editingProvider !== null;
+                    let oauthProviderId = formData.get("oauth_provider_id");
+
+                    if (authType === "oauth") {
+                        // When editing and form field is empty, fallback to existing provider's oauth_provider
+                        if (isEditing && !oauthProviderId) {
+                            const existingProvider = appState.config.providers[appState.editingProvider];
+                            if (existingProvider?.oauth_provider) {
+                                oauthProviderId = existingProvider.oauth_provider;
+                            }
+                        }
+                        // Require oauth_provider for OAuth auth type
+                        if (!oauthProviderId) {
+                            notifyError(
+                                "Please complete OAuth authentication first.",
+                            );
+                            return;
+                        }
                     }
 
                     const providerData = {
@@ -3160,8 +3194,6 @@ strip_match = false             # strip matched phrase (default: false)</pre>
                     }
 
                     try {
-                        const isEditing = appState.editingProvider !== null;
-
                         if (isEditing) {
                             // Edit mode
                             const editIndex = appState.editingProvider;
@@ -4048,14 +4080,17 @@ strip_match = false             # strip matched phrase (default: false)</pre>
 
                     const tokenData = await exchangeResponse.json();
 
-                    // Show success
+                    // Show success and set hidden field
                     document
                         .getElementById("oauth-step-2")
                         .classList.add("hidden");
                     document
                         .getElementById("oauth-step-3")
                         .classList.remove("hidden");
-                    sessionStorage.setItem("oauth_provider_id", providerId);
+                    const hiddenField = document.getElementById("oauth_provider_id");
+                    if (hiddenField) {
+                        hiddenField.value = providerId;
+                    }
 
                     notifySuccess(
                         `OAuth authentication successful! Token saved for ${providerId}`,
