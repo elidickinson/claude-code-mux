@@ -1,5 +1,5 @@
 use super::{AnthropicProvider, ProviderResponse, StreamResponse, error::ProviderError};
-use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock, KnownContentBlock, ThinkingConfig};
+use crate::models::{AnthropicRequest, CountTokensRequest, CountTokensResponse, MessageContent, ContentBlock, KnownContentBlock};
 use crate::auth::{TokenStore, OAuthClient, OAuthConfig};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -36,13 +36,34 @@ fn extract_forward_headers(headers: &reqwest::header::HeaderMap) -> HashMap<Stri
     result
 }
 
-/// Strip signed thinking blocks and disable thinking mode.
-/// Anthropic validates thinking block signatures, so we must strip blocks
-/// signed by other providers (we can't verify their signatures).
-/// Unsigned blocks (no signature field) are preserved.
-/// Also disables thinking since Anthropic requires thinking blocks in assistant
-/// messages when thinking is enabled.
-fn strip_thinking_blocks(request: &mut AnthropicRequest) {
+// Thinking block signature handling for Anthropic
+//
+// What we know works:
+//   - Sending thinking blocks WITH valid Anthropic signatures → accepted
+//   - Sending thinking blocks WITHOUT a signature field at all (unsigned) → accepted
+//   - Omitting thinking blocks from prior turns entirely → accepted
+//
+// What doesn't work:
+//   - Sending thinking blocks with invalid/non-Anthropic signatures → rejected
+//   - Sending thinking blocks with signature field removed (was present, now absent) →
+//     same as unsigned, should work (identical JSON), but untested in production
+//   - Stripping just the signature field was rejected in testing with "Field required"
+//
+// Strategy:
+//   1. Proactive: use heuristic to strip thinking blocks with non-Anthropic signatures
+//      (Anthropic signatures are long base64 strings, 200+ chars)
+//   2. Fallback: on any signature error from Anthropic, strip all signatures
+//      (converting to unsigned blocks), and retry
+
+/// Anthropic signatures are long base64 strings (200+ chars typically).
+fn looks_like_anthropic_signature(sig: &str) -> bool {
+    use base64::Engine;
+    sig.len() >= 100 && base64::engine::general_purpose::STANDARD.decode(sig).is_ok()
+}
+
+/// Proactive: strip thinking blocks that don't look like they came from Anthropic.
+/// Keeps unsigned blocks and blocks with valid-looking Anthropic signatures.
+fn strip_non_anthropic_thinking(request: &mut AnthropicRequest) {
     let mut stripped_count = 0;
 
     for message in &mut request.messages {
@@ -51,13 +72,13 @@ fn strip_thinking_blocks(request: &mut AnthropicRequest) {
             blocks.retain(|block| {
                 match block {
                     ContentBlock::Known(KnownContentBlock::Thinking { raw }) => {
-                        // Keep unsigned blocks (no signature field)
-                        // Strip signed blocks (can't verify other providers' signatures)
-                        if raw.get("signature").is_some() {
-                            tracing::debug!("🧹 Stripping signed thinking block");
-                            false
-                        } else {
-                            true
+                        match raw.get("signature").and_then(|v| v.as_str()) {
+                            None => true,
+                            Some(sig) if looks_like_anthropic_signature(sig) => true,
+                            Some(_) => {
+                                tracing::debug!("🧹 Stripping thinking block with non-Anthropic signature");
+                                false
+                            }
                         }
                     }
                     _ => true,
@@ -67,28 +88,44 @@ fn strip_thinking_blocks(request: &mut AnthropicRequest) {
         }
     }
 
-    // Remove messages that became empty
-    let len = request.messages.len();
+    remove_empty_messages(request);
+
+    if stripped_count > 0 {
+        tracing::info!("🧹 Stripped {} non-Anthropic thinking block(s)", stripped_count);
+    }
+}
+
+/// Fallback: strip all signatures from thinking blocks, converting them to unsigned.
+/// Used when Anthropic rejects a signature the heuristic thought was valid.
+fn strip_all_thinking_signatures(request: &mut AnthropicRequest) {
+    let mut stripped_count = 0;
+
+    for message in &mut request.messages {
+        if let MessageContent::Blocks(blocks) = &mut message.content {
+            for block in blocks.iter_mut() {
+                if let ContentBlock::Known(KnownContentBlock::Thinking { raw }) = block {
+                    if let Some(obj) = raw.as_object_mut() {
+                        if obj.remove("signature").is_some() {
+                            stripped_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if stripped_count > 0 {
+        tracing::info!("🧹 Fallback: stripped signatures from {} thinking block(s)", stripped_count);
+    }
+}
+
+fn remove_empty_messages(request: &mut AnthropicRequest) {
     request.messages.retain(|msg| {
         match &msg.content {
             MessageContent::Text(t) => !t.is_empty(),
             MessageContent::Blocks(b) => !b.is_empty(),
         }
     });
-    let removed_msgs = len - request.messages.len();
-
-    // Disable thinking since we stripped thinking blocks
-    if stripped_count > 0 {
-        request.thinking = Some(ThinkingConfig {
-            r#type: "disabled".to_string(),
-            budget_tokens: None,
-        });
-        tracing::info!("🧹 Stripped {} thinking block(s), disabled thinking mode", stripped_count);
-    }
-
-    if removed_msgs > 0 {
-        tracing::debug!("🧹 Removed {} empty messages", removed_msgs);
-    }
 }
 
 /// Sanitize tool_use.id and tool_use_id fields to match Anthropic's pattern requirement.
@@ -393,23 +430,27 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
     async fn send_message(&self, request: AnthropicRequest) -> Result<ProviderResponse, ProviderError> {
         let url = format!("{}/v1/messages", self.base_url);
 
-        // Sanitize tool IDs for Anthropic
+        // Sanitize request for Anthropic targets
         let mut request = request;
         let is_anthropic = self.base_url.contains("anthropic.com");
         sanitize_tool_use_ids(&mut request, is_anthropic);
+        if is_anthropic {
+            strip_non_anthropic_thinking(&mut request);
+        }
 
         // Get authentication header value (API key or OAuth token)
         let auth_value = self.get_auth_header().await?;
 
-        // Try request, retry with stripped thinking blocks on signature error
         let result = self.try_send_message(&url, &auth_value, &request).await;
 
-        // If signature error, strip thinking blocks and retry
-        if let Err(ProviderError::ApiError { message, .. }) = &result {
-            if message.contains("Invalid `signature` in `thinking` block") {
-                tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying");
-                strip_thinking_blocks(&mut request);
-                return self.try_send_message(&url, &auth_value, &request).await;
+        // Fallback: if signature error, strip all signed thinking blocks and retry
+        if is_anthropic {
+            if let Err(ProviderError::ApiError { message, .. }) = &result {
+                if message.contains("signature") {
+                    tracing::warn!("🔄 Signature error from Anthropic: {}, stripping all signed thinking blocks and retrying", message);
+                    strip_all_thinking_signatures(&mut request);
+                    return self.try_send_message(&url, &auth_value, &request).await;
+                }
             }
         }
 
@@ -509,25 +550,24 @@ impl AnthropicProvider for AnthropicCompatibleProvider {
 
         let url = format!("{}/v1/messages", self.base_url);
 
-        // Sanitize tool IDs for Anthropic
+        // Sanitize request for Anthropic targets
         let mut request = request;
         let is_anthropic = self.base_url.contains("anthropic.com");
         sanitize_tool_use_ids(&mut request, is_anthropic);
+        if is_anthropic {
+            strip_non_anthropic_thinking(&mut request);
+        }
 
         // Get authentication header value
         let auth_value = self.get_auth_header().await?;
 
-        // Try request, retry with stripped thinking blocks on signature error
+        // Try request, fallback: strip all signed thinking blocks on signature error
         let response = match self.try_send_stream_request(&url, &auth_value, &request).await {
             Ok(resp) => resp,
-            Err(ProviderError::ApiError { status, message }) => {
-                if message.contains("Invalid `signature` in `thinking` block") {
-                    tracing::info!("🔄 Signature error detected, stripping thinking blocks and retrying stream");
-                    strip_thinking_blocks(&mut request);
-                    self.try_send_stream_request(&url, &auth_value, &request).await?
-                } else {
-                    return Err(ProviderError::ApiError { status, message });
-                }
+            Err(ProviderError::ApiError { message, .. }) if is_anthropic && message.contains("signature") => {
+                tracing::warn!("🔄 Signature error from Anthropic: {}, stripping all signed thinking blocks and retrying stream", message);
+                strip_all_thinking_signatures(&mut request);
+                self.try_send_stream_request(&url, &auth_value, &request).await?
             }
             Err(e) => return Err(e),
         };

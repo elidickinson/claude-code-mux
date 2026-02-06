@@ -770,8 +770,7 @@ impl OpenAIProvider {
 
         let mut content_blocks = Vec::new();
 
-        // Add reasoning as thinking block if present.
-        // Note: omit `signature` field - Anthropic accepts unsigned blocks but rejects empty signatures.
+        // Add reasoning as thinking block (unsigned — no signature field).
         if let Some(reasoning) = choice.message.reasoning {
             if !reasoning.is_empty() {
                 content_blocks.push(ContentBlock::thinking(serde_json::json!({
