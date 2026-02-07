@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::process::Command;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
@@ -10,6 +11,96 @@ mod pid;
 mod providers;
 mod router;
 mod server;
+
+const PROCESS_TRANSITION_GRACE_MS: u64 = 500;
+
+async fn stop_service(pid: u32) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{kill, Signal};
+        use nix::unistd::Pid;
+        kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
+            .map_err(|e| anyhow::anyhow!("Failed to stop service: {}", e))?;
+    }
+    #[cfg(windows)]
+    {
+        let output = Command::new("taskkill")
+            .args(&["/PID", &pid.to_string(), "/F"])
+            .output()
+            .map_err(|e| anyhow::anyhow!("Failed to execute taskkill: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("Failed to stop process: {}", stderr));
+        }
+    }
+    tokio::time::sleep(tokio::time::Duration::from_millis(PROCESS_TRANSITION_GRACE_MS)).await;
+    Ok(())
+}
+
+async fn start_foreground(config: cli::AppConfig, config_path: PathBuf) -> anyhow::Result<()> {
+    // Write PID file
+    if let Err(e) = pid::write_pid() {
+        eprintln!("Warning: Failed to write PID file: {}", e);
+    }
+
+    tracing::info!("Starting Claude Code Mux on port {}", config.server.port);
+    println!("🚀 Claude Code Mux v{}", env!("CARGO_PKG_VERSION"));
+    println!("📡 Starting server on {}:{}", config.server.host, config.server.port);
+    println!();
+
+    // Display routing configuration
+    println!("🔀 Router Configuration:");
+    println!("   Default: {}", config.router.default);
+    if let Some(ref bg) = config.router.background {
+        println!("   Background: {}", bg);
+    }
+    if let Some(ref think) = config.router.think {
+        println!("   Think: {}", think);
+    }
+    if let Some(ref ws) = config.router.websearch {
+        println!("   WebSearch: {}", ws);
+    }
+    println!();
+    println!("Press Ctrl+C to stop");
+
+    let result = server::start_server(config, config_path).await;
+    let _ = pid::cleanup_pid();
+    result
+}
+
+fn spawn_background_service(
+    port: Option<u16>,
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let exe_path = std::env::current_exe()?;
+    let mut cmd = Command::new(&exe_path);
+    cmd.arg("start");
+
+    if let Some(port) = port {
+        cmd.arg("--port").arg(port.to_string());
+    }
+    if let Some(config_path) = config_path {
+        cmd.arg("--config").arg(config_path);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::libc::setsid();
+                Ok(())
+            });
+        }
+    }
+
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    cmd.spawn()?;
+    Ok(())
+}
 
 #[derive(Parser)]
 #[command(name = "ccm")]
@@ -31,15 +122,20 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long)]
         port: Option<u16>,
+        /// Run in detached/background mode
+        #[arg(short = 'd', long)]
+        detach: bool,
     },
     /// Stop the router service
     Stop,
     /// Restart the router service
-    Restart,
+    Restart {
+        /// Run in detached/background mode
+        #[arg(short = 'd', long)]
+        detach: bool,
+    },
     /// Check service status
     Status,
-    /// Initialize configuration interactively
-    Init,
     /// Manage models and providers
     Model,
     /// Install statusline script for Claude Code
@@ -66,7 +162,36 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
     match cli.command {
-        Commands::Start { port } => {
+        Commands::Start { port, detach } => {
+            // If detached, spawn as background process
+            if detach {
+                println!("Starting Claude Code Mux in background...");
+
+                // Stop existing service if running
+                if let Ok(pid) = pid::read_pid() {
+                    if pid::is_process_running(pid) {
+                        println!("Stopping existing service...");
+                        if let Err(e) = stop_service(pid).await {
+                            eprintln!("Warning: Failed to stop existing service: {}", e);
+                        }
+                    }
+                }
+                let _ = pid::cleanup_pid();
+
+                // Start in background
+                spawn_background_service(port, cli.config)?;
+                tokio::time::sleep(tokio::time::Duration::from_millis(PROCESS_TRANSITION_GRACE_MS)).await;
+
+                if let Ok(pid) = pid::read_pid() {
+                    println!("✅ Claude Code Mux started in background (PID: {})", pid);
+                } else {
+                    println!("✅ Claude Code Mux started in background");
+                }
+                println!("📡 Running on port {}", port.unwrap_or(config.server.port));
+                return Ok(());
+            }
+
+            // Foreground mode
             let mut config = config;
 
             // Override port if specified
@@ -74,145 +199,76 @@ async fn main() -> anyhow::Result<()> {
                 config.server.port = port;
             }
 
-            // Write PID file
-            if let Err(e) = pid::write_pid() {
-                eprintln!("Warning: Failed to write PID file: {}", e);
+            // Check if already running
+            if let Ok(existing_pid) = pid::read_pid() {
+                if pid::is_process_running(existing_pid) {
+                    eprintln!("❌ Error: Service is already running (PID: {})", existing_pid);
+                    eprintln!("Use 'ccm stop' to stop it first, or use 'ccm start -d' to restart it");
+                    return Ok(());
+                }
+                // Stale PID file, clean it up
+                let _ = pid::cleanup_pid();
             }
 
-            tracing::info!("Starting Claude Code Mux on port {}", config.server.port);
-            println!("🚀 Claude Code Mux v{}", env!("CARGO_PKG_VERSION"));
-            println!("📡 Starting server on {}:{}", config.server.host, config.server.port);
-            println!();
-            println!("⚡️ Rust-powered for maximum performance");
-            println!("🧠 Intelligent context-aware routing");
-            println!();
-
-            // Display routing configuration
-            println!("🔀 Router Configuration:");
-            println!("   Default: {}", config.router.default);
-            if let Some(ref bg) = config.router.background {
-                println!("   Background: {}", bg);
-            }
-            if let Some(ref think) = config.router.think {
-                println!("   Think: {}", think);
-            }
-            if let Some(ref ws) = config.router.websearch {
-                println!("   WebSearch: {}", ws);
-            }
-            println!();
-            println!("Press Ctrl+C to stop");
-
-            // Cleanup PID file on exit
-            let result = server::start_server(config, config_path).await;
-            let _ = pid::cleanup_pid();
-            result?;
+            start_foreground(config, config_path).await?;
         }
         Commands::Stop => {
             println!("Stopping Claude Code Mux...");
             match pid::read_pid() {
-                Ok(pid) => {
-                    if pid::is_process_running(pid) {
-                        #[cfg(unix)]
-                        {
-                            use nix::sys::signal::{kill, Signal};
-                            use nix::unistd::Pid;
-
-                            if let Err(e) = kill(Pid::from_raw(pid as i32), Signal::SIGTERM) {
-                                eprintln!("Failed to stop service: {}", e);
-                            } else {
-                                println!("✅ Service stopped successfully");
-                                let _ = pid::cleanup_pid();
-                            }
-                        }
-                        #[cfg(windows)]
-                        {
-                            use std::process::Command;
-                            let _ = Command::new("taskkill")
-                                .args(&["/PID", &pid.to_string(), "/F"])
-                                .output();
+                Ok(pid) if pid::is_process_running(pid) => {
+                    match stop_service(pid).await {
+                        Ok(_) => {
                             println!("✅ Service stopped successfully");
                             let _ = pid::cleanup_pid();
                         }
-                    } else {
-                        println!("Service is not running");
-                        let _ = pid::cleanup_pid();
+                        Err(e) => {
+                            eprintln!("❌ Failed to stop service (PID: {}): {}", pid, e);
+                        }
                     }
                 }
-                Err(_) => {
-                    println!("Service is not running (no PID file found)");
+                _ => {
+                    println!("Service is not running");
+                    let _ = pid::cleanup_pid();
                 }
             }
         }
-        Commands::Restart => {
-            println!("Restarting Claude Code Mux...");
-
+        Commands::Restart { detach } => {
             // Stop the existing service
-            match pid::read_pid() {
+            let was_running = match pid::read_pid() {
                 Ok(pid) => {
                     if pid::is_process_running(pid) {
                         println!("Stopping existing service...");
-                        #[cfg(unix)]
-                        {
-                            use nix::sys::signal::{kill, Signal};
-                            use nix::unistd::Pid;
-
-                            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                        match stop_service(pid).await {
+                            Ok(_) => true,
+                            Err(e) => {
+                                eprintln!("Warning: Failed to stop existing service: {}", e);
+                                false
+                            }
                         }
-                        #[cfg(windows)]
-                        {
-                            use std::process::Command;
-                            let _ = Command::new("taskkill")
-                                .args(&["/PID", &pid.to_string(), "/F"])
-                                .output();
-                        }
-                        // Wait a bit for the process to exit
-                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    } else {
+                        false
                     }
                 }
-                Err(_) => {
-                    println!("No existing service found");
-                }
-            }
+                Err(_) => false,
+            };
             let _ = pid::cleanup_pid();
 
-            // Start the service in the background
-            println!("Starting service...");
-            use std::process::Command;
+            if detach {
+                // Background mode
+                println!("Starting service in background...");
+                let port_from_config = Some(config.server.port);
+                spawn_background_service(port_from_config, cli.config)?;
+                tokio::time::sleep(tokio::time::Duration::from_millis(PROCESS_TRANSITION_GRACE_MS)).await;
 
-            let exe_path = std::env::current_exe()?;
-            let mut cmd = Command::new(&exe_path);
-            cmd.arg("start");
-
-            // Pass the config file if it was explicitly specified
-            if let Some(config_path) = cli.config {
-                cmd.arg("--config").arg(config_path);
-            }
-
-            // Spawn detached process
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                unsafe {
-                    cmd.pre_exec(|| {
-                        // Create a new process group
-                        nix::libc::setsid();
-                        Ok(())
-                    });
+                let verb = if was_running { "restarted" } else { "started" };
+                if let Ok(pid) = pid::read_pid() {
+                    println!("✅ Service {} successfully (PID: {})", verb, pid);
+                } else {
+                    println!("✅ Service {} successfully", verb);
                 }
-            }
-
-            cmd.stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-
-            match cmd.spawn() {
-                Ok(_) => {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-                    println!("✅ Service restarted successfully");
-                }
-                Err(e) => {
-                    eprintln!("Failed to restart service: {}", e);
-                }
+            } else {
+                // Foreground mode
+                start_foreground(config, config_path).await?;
             }
         }
         Commands::Status => {
@@ -230,13 +286,6 @@ async fn main() -> anyhow::Result<()> {
                     println!("❌ Service is not running");
                 }
             }
-        }
-        Commands::Init => {
-            println!("🔧 Interactive Configuration Setup");
-            println!();
-            println!("This feature will guide you through setting up your configuration.");
-            println!("For now, please edit config/default.toml manually.");
-            // TODO: Implement interactive setup with prompts
         }
         Commands::Model => {
             println!("📊 Model Configuration");
