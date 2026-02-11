@@ -492,6 +492,11 @@ async fn handle_openai_chat_completions(
                     }
                 }
 
+                // Write routing info immediately on first attempt
+                if idx == 0 {
+                    write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                }
+
                 match provider.send_message(anthropic_request.clone()).await {
                     Ok(anthropic_response) => {
                         // Calculate and log metrics
@@ -499,8 +504,10 @@ async fn handle_openai_chat_completions(
                         let tok_s = (anthropic_response.usage.output_tokens as f32 * 1000.0) / latency_ms as f32;
                         info!("📊 {}@{} {}ms {:.0}t/s {}tok", mapping.actual_model, mapping.provider, latency_ms, tok_s, anthropic_response.usage.output_tokens);
 
-                        // Write routing info for statusline
-                        write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                        // Write routing info on fallback success (idx==0 already wrote above)
+                        if idx > 0 {
+                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                        }
 
                         // Transform Anthropic response to OpenAI format
                         let openai_response = openai_compat::transform_anthropic_to_openai(
@@ -746,12 +753,19 @@ async fn handle_messages(
                     is_streaming,
                 );
 
+                // Write routing info immediately on first attempt
+                if idx == 0 {
+                    write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                }
+
                 if is_streaming {
                     // Streaming request
                     match provider.send_message_stream(anthropic_request).await {
                         Ok(stream_response) => {
-                            // Write routing info for statusline
-                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                            // Write routing info on fallback success (idx==0 already wrote above)
+                            if idx > 0 {
+                                write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                            }
 
                             // Convert provider stream to HTTP response
                             // The provider already returns properly formatted SSE bytes (event: + data: lines)
@@ -799,8 +813,10 @@ async fn handle_messages(
                             // Trace the response
                             state.message_tracer.trace_response(&trace_id, &response, latency_ms);
 
-                            // Write routing info for statusline
-                            write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                            // Write routing info on fallback success (idx==0 already wrote above)
+                            if idx > 0 {
+                                write_routing_info(&mapping.actual_model, &mapping.provider, &decision.route_type);
+                            }
 
                             return Ok(Json(response).into_response());
                         }
